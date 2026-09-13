@@ -1,7 +1,7 @@
 # sdr-tetra-sniffer
 
-`tetra-sniff` records unencrypted TETRA voice traffic from one SDR receiver. 
-It tracks every carrier inside the captures span, correlates the control channel across those carriers to give each call its real talkgroup and subscriber identity, and writes one WAV file for each
+Detect and record unencrypted TETRA voice traffic from one SDR receiver. 
+The program tracks every carrier inside the captured span, correlates the control channel across those carriers to give each call its real talkgroup and subscriber identity, and writes one WAV file for each
 talkgroup. Each run also writes a wall-clock map, so any byte offset in any
 recording converts to UTC and back.
 
@@ -55,8 +55,8 @@ control carriers broadcast. See "Find your carriers" below.
 ## Installation
 
 ```
-git clone --recurse-submodules <this-repo> tetra-sniffer
-cd tetra-sniffer
+git clone --recurse-submodules git@github.com:martinezpl/sdr-tetra-sniffer.git
+cd sdr-tetra-sniffer
 ./build.sh
 ./tetra-sniff help
 ```
@@ -258,9 +258,9 @@ The program sends `READY=1` and `WATCHDOG=1` to `$NOTIFY_SOCKET`, so
 default output directory is relative to the working directory:
 
 ```
-ExecStart=/opt/tetra-sniffer/tetra-sniff run \
+ExecStart=/opt/sdr-tetra-sniffer/tetra-sniff run \
     --carriers 419162500,419562500 \
-    --out /var/lib/tetra-sniffer/recordings
+    --out /var/lib/sdr-tetra-sniffer/recordings
 ```
 
 Give `TasksMax` room for the whole tree: `--max-gssi` talkgroup writers, 256
