@@ -191,7 +191,7 @@ static const char* USAGE =
 	"                     Default 0.2.\n"
 	"  --dwell SECONDS    Decode time on the candidates. A strong carrier locks in\n"
 	"                     0.2 to 1.7 s, and a weak one can need far longer.\n"
-	"                     Default 8.\n"
+	"                     Default 15.\n"
 	"  --max-carriers N   How many candidates the decode stage takes, strongest\n"
 	"                     first. Default 15.\n"
 	"\n"
@@ -296,7 +296,7 @@ static SweepArgs parse_sweep_args(int argc, char** argv)
 	// with no arguments finds a network wherever it sits in it. A rate of 0
 	// means "ask the receiver for the widest span it can give".
 	SweepArgs s = { 380000000, 430000000, 0, 12500, DEFAULT_TUNE_OFFSET,
-			-1, false, 0, 0.2, 8, 6, 15 };
+			-1, false, 0, 0.2, 15, 6, 15 };
 	for (int i = 1; i < argc; i++) {
 		std::string t = argv[i];
 		auto val = [&]() -> std::string { if (++i >= argc) die(t + " needs a value"); return argv[i]; };
