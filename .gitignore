@@ -1,0 +1,5 @@
+build/
+/tetra-sniff
+recordings/
+.DS_Store
+__pycache__/

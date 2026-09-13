@@ -1,0 +1,6 @@
+[submodule "sdrpp-tetra-demodulator"]
+	path = sdrpp-tetra-demodulator
+	url = https://github.com/martinezpl/sdrpp-tetra-demodulator.git
+[submodule "third_party/sdrpp"]
+	path = third_party/sdrpp
+	url = https://github.com/AlexandreRouma/SDRPlusPlus.git
