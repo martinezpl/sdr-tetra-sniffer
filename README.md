@@ -1,9 +1,31 @@
 # sdr-tetra-sniffer
 
-Detect and record unencrypted TETRA voice traffic from one SDR receiver. 
-The program tracks every carrier inside the captured span, correlates the control channel across those carriers to give each call its real talkgroup and subscriber identity, and writes one WAV file for each
-talkgroup. Each run also writes a wall-clock map, so any byte offset in any
-recording converts to UTC and back.
+- [Prerequisites](#prerequisites)
+  - [SDR receiver](#sdr-receiver)
+  - [Host](#host)
+  - [Headroom](#headroom)
+  - [Packages](#packages)
+  - [Active TETRA network in range](#active-tetra-network-in-range)
+- [Installation](#installation)
+  - [Third party dependencies](#third-party-dependencies)
+- [Usage](#usage)
+  - [Finding carriers](#finding-carriers)
+  - [The carrier pool](#the-carrier-pool)
+  - [Core options](#core-options)
+  - [Output](#output)
+  - [UI](#ui)
+  - [Run it as a service](#run-it-as-a-service)
+- [Architecture](#architecture)
+  - [Parent — the radio consumer](#parent--the-radio-consumer)
+  - [Carrier child, one for each slot — demodulation](#carrier-child-one-for-each-slot--demodulation)
+  - [The carrier pool — why a sweep only needs the control carriers](#the-carrier-pool--why-a-sweep-only-needs-the-control-carriers)
+  - [The shared allocation table](#the-shared-allocation-table)
+  - [Stitch — the demultiplexer](#stitch--the-demultiplexer)
+  - [Talkgroup worker, one for each talkgroup — speech and files](#talkgroup-worker-one-for-each-talkgroup--speech-and-files)
+  - [Why processes and not threads](#why-processes-and-not-threads)
+  - [Layout](#layout)
+  - [Tests](#tests)
+- [To be optimized](#to-be-optimized)
 
 ## Prerequisites
 
@@ -91,7 +113,7 @@ nohup ./tetra-sniff run --carriers 419162500,419562500 \
   > tetra-sniff.log 2>&1 < /dev/null &
 ```
 
-### Find your carriers
+### Finding carriers
 
 `sweep` measures every channel of the raster, then puts a demodulator on
 each peak. It prints a ready `run` command line:
@@ -135,12 +157,14 @@ at once needs one receiver for each, named with --device.
 
   ./tetra-sniff run --center [...] \
       --tune-offset -166 \
+      --rate 3200000 \
       --carriers [...]
 
   # span 2 of 2, 9 carrier(s), 3 control
 
   ./tetra-sniff run --center [...] \
       --tune-offset -180 \
+      --rate 3200000 \
       --carriers [...]
 
 2 carrier(s) sit too far from any control carrier to share a span with
@@ -153,14 +177,8 @@ carrier is missing from that list. "run" reports each grant that names a
 carrier the list does not hold, so watch its log and add what it names.
 ```
 
-**A network wider than one span needs one run for each span.** A receiver
-hears one span at a time, so `sweep` groups what it found into spans and
-prints a `run` command for each, opened by a control carrier.
-
 With `--carriers` and no `--center`, the receiver tunes to the midpoint of
 your list.
-
-### What the carrier list must contain
 
 - **Every control carrier is mandatory.** Every channel grant is broadcast on
   one, and a grant is how the program learns that a call is starting, on which

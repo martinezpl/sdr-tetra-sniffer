@@ -547,6 +547,10 @@ int sweep_main(const SweepArgs& a)
 			printf("\n  # span %zu of %zu, %zu carrier(s), %zu control\n", i + 1,
 			       runs.size(), g.hz.size(), g.controls);
 		printf("\n  ./tetra-sniff run --center %.0f \\\n", center);
+		// The rate is what the receiver was measured to take, and the carriers
+		// were grouped into spans that wide. A run at any other rate has a
+		// different span, so the group it is handed may no longer fit.
+		printf("      --rate %.0f \\\n", rate);
 		if (!ppm.empty()) printf("      --tune-offset %ld \\\n", offset_at(center));
 		printf("      --carriers ");
 		for (size_t j = 0; j < g.hz.size(); j++) printf("%s%u", j ? "," : "", g.hz[j]);
