@@ -90,6 +90,10 @@ target_include_directories(events_test PRIVATE . ${DEC}/src)
 add_executable(allocations_test test/allocations_test.cpp allocations.cpp)
 target_include_directories(allocations_test PRIVATE .)
 
+add_executable(radio_test test/radio_test.cpp radio.cpp)
+target_include_directories(radio_test PRIVATE .)
+
 enable_testing()
 add_test(NAME events_test COMMAND events_test)
 add_test(NAME allocations_test COMMAND allocations_test)
+add_test(NAME radio_test COMMAND radio_test)
