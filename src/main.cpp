@@ -2,18 +2,14 @@
 #include <cctype>
 #include <cerrno>
 #include <cmath>
-#include <condition_variable>
 #include <csignal>
 #include <cstring>
 #include <ctime>
 #include <cstdlib>
-#include <deque>
 #include <iostream>
 #include <iterator>
 #include <set>
-#include <mutex>
 #include <string>
-#include <thread>
 #include <vector>
 
 #include <dirent.h>
@@ -47,7 +43,6 @@ static const size_t DEFAULT_MAX_GSSI = 256;
 static const size_t DEFAULT_MAX_CARRIERS = 15;
 // One health line every five minutes. A month of running is then 8640 lines.
 static const double DEFAULT_STATUS = 300;
-// The dongle callback makes about 400 blocks each second at every rate that main() sets.
 static const size_t DEFAULT_QUEUE_BLOCKS = 400;
 
 static const char* USAGE =
@@ -555,36 +550,8 @@ static void write_learned(const std::string& path, const Allocations& alloc,
 static volatile sig_atomic_t stop_flag = 0;
 static void on_signal(int) { stop_flag = 1; }
 
-// --queue-blocks sets this before the reader thread starts. It is read only after that.
-static size_t rtl_queue_max = DEFAULT_QUEUE_BLOCKS;
 // --status sets this before the run starts. Zero turns the status line off.
 static double status_seconds = DEFAULT_STATUS;
-
-struct RtlQueue {
-	std::mutex mutex;
-	std::condition_variable ready;
-	std::deque<std::vector<uint8_t>> blocks;
-	// The mutex protects this counter. The parent reads it with the queue depth.
-	uint64_t dropped = 0;
-	bool done = false;
-};
-
-static void on_rtl_block(const uint8_t* data, uint32_t len, void* p)
-{
-	auto* q = (RtlQueue*)p;
-	{
-		std::lock_guard<std::mutex> lock(q->mutex);
-		// The queue holds 1 second of IQ data by default. An overflow drops the new block.
-		if (q->blocks.size() >= rtl_queue_max) {
-			// clock.log counts every drop. This line reports the first one at once.
-			if (q->dropped++ == 0)
-				std::cout << "tetra-sniff: receiver queue is full, blocks are dropped\n";
-			return;
-		}
-		q->blocks.emplace_back(data, data + len);
-	}
-	q->ready.notify_one();
-}
 
 static bool write_all(int fd, const void* p, size_t n)
 {
@@ -719,7 +686,6 @@ int main(int argc, char** argv)
 	if (cmd == "sweep") return sweep_main(parse_sweep_args(argc - 1, argv + 1));
 	if (cmd != "run") die("unknown command " + cmd + "\nRun \"tetra-sniff help\" for the commands.");
 	Args a = parse_args(argc - 1, argv + 1);
-	rtl_queue_max = a.queue_blocks;
 	status_seconds = a.status;
 	IqSource src = open_iq(a);
 
@@ -851,7 +817,6 @@ int main(int argc, char** argv)
 	sigaction(SIGTERM, &sa, nullptr);
 	// A dead stitch or carrier child ends the run. The handler has no SA_RESTART,
 	// so it also breaks the blocking read. Systemd starts a new tree.
-	// (SIGCHLD itself is installed above, before radio_open.)
 
 	std::vector<dsp::channel::RxVFO> vfos(n);
 	{
@@ -873,26 +838,6 @@ int main(int argc, char** argv)
 	for (auto& p : tmp) p = dsp::buffer::alloc<dsp::complex_t>(block);
 	size_t have = src.pending.size();
 	memcpy(raw.data(), src.pending.data(), have);
-	RtlQueue rtl_queue;
-	std::thread rtl_thread;
-	if (src.radio) {
-		int n = (int)llround(src.rate / 400.0);
-		if (n < 1) n = 1;
-		rtl_thread = std::thread([&] {
-			std::vector<float> buf((size_t)n * 2);
-			for (;;) {
-				int got = radio_read(src.radio, buf.data(), n);
-				if (got < 0) break;
-				if (got == 0) continue;
-				on_rtl_block((const uint8_t*)buf.data(), (uint32_t)got * 8, &rtl_queue);
-			}
-			{
-				std::lock_guard<std::mutex> lock(rtl_queue.mutex);
-				rtl_queue.done = true;
-			}
-			rtl_queue.ready.notify_one();
-		});
-	}
 
 	int clock_fd = open((run_dir + "/clock.log").c_str(), O_CREAT | O_APPEND | O_WRONLY, 0644);
 	if (clock_fd < 0) die(run_dir + "/clock.log: " + strerror(errno));
@@ -903,7 +848,6 @@ int main(int argc, char** argv)
 			  "# utc vfo_sample queue dropped event\n",
 		run_dir.c_str(), start_iso.c_str(), src.rate, VFO_RATE, src.center);
 	log_previous_run(clock_fd, a.out, run_dir);
-	// The dongle is open and every child runs. systemd may start what depends on us.
 	sd_notify("READY=1");
 	// Which carriers a grant revealed, as against those the command line gave.
 	std::set<uint32_t> learned_hz;
@@ -912,48 +856,33 @@ int main(int argc, char** argv)
 	uint64_t dropped = 0;
 
 	while (!stop_flag) {
-		ssize_t r;
+		int cnt = 0;
 		if (src.radio) {
-			std::vector<uint8_t> next;
-			{
-				std::unique_lock<std::mutex> lock(rtl_queue.mutex);
-				rtl_queue.ready.wait(lock, [&] {
-					return stop_flag || rtl_queue.done || !rtl_queue.blocks.empty();
-				});
-				if (stop_flag || (rtl_queue.done && rtl_queue.blocks.empty())) break;
-				next = std::move(rtl_queue.blocks.front());
-				rtl_queue.blocks.pop_front();
-				queue = rtl_queue.blocks.size();
-				dropped = rtl_queue.dropped + radio_overflows(src.radio);
-			}
-			r = next.size();
-			memcpy(raw.data() + have, next.data(), next.size());
+			int got = radio_read(src.radio, (float*)in, block);
+			if (got < 0) break;
+			if (got == 0) continue;
+			cnt = got;
+			dropped = radio_overflows(src.radio);
 		} else {
-			r = read(src.fd, raw.data() + have, raw.size() - have);
+			ssize_t r = read(src.fd, raw.data() + have, raw.size() - have);
+			if (r < 0) {
+				if (errno == EINTR) continue;
+				std::cout << "tetra-sniff: read: " + std::string(strerror(errno)) + "\n";
+				break;
+			}
+			if (r == 0) break;
+			have += r;
+			cnt = (int)(have / bytes_per);
+			to_cf32(src.fmt, raw.data(), cnt, in);
+			have -= (size_t)cnt * bytes_per;
+			memmove(raw.data(), raw.data() + (size_t)cnt * bytes_per, have);
 		}
-		if (r < 0) {
-			if (!src.radio && errno == EINTR) continue;
-			// One string, then one write. The RTL thread cannot split the line.
-			std::cout << "tetra-sniff: read: " + std::string(strerror(errno)) + "\n";
-			break;
-		}
-		if (r == 0) {
-			if (src.radio) continue;
-			break;
-		}
-		have += r;
-		int cnt = have / bytes_per;
-		to_cf32(src.fmt, raw.data(), cnt, in);
-		have -= cnt * bytes_per;
-		memmove(raw.data(), raw.data() + cnt * bytes_per, have);
 		for (size_t i = 0; i < n; i++) {
 			if (pipes[i] < 0) continue;
 			int m = vfos[i].process(cnt, in, tmp[i]);
 			// Every VFO gets the same input count. Child 0 counts exactly these samples.
 			if (!i) vfo_samples += m;
 			if (write_all(pipes[i], tmp[i], m * sizeof(dsp::complex_t))) continue;
-			// One dead carrier child stops the run. Systemd starts a new tree.
-			// One string, then one write. The RTL thread cannot split the line.
 			std::cout << "tetra-sniff: " + std::to_string(a.hz[i]) + " child stopped reading: " +
 					 strerror(errno) + "\n";
 			close(pipes[i]);
@@ -979,10 +908,7 @@ int main(int argc, char** argv)
 		clock_tick(clock_fd, vfo_samples, queue, dropped);
 	}
 	close(clock_fd);
-	if (src.radio) {
-		radio_stop(src.radio);
-		rtl_thread.join();
-	}
+	if (src.radio) radio_stop(src.radio);
 
 	for (size_t i = 0; i < n; i++)
 		if (pipes[i] >= 0) close(pipes[i]);

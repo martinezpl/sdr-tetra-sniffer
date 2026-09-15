@@ -43,7 +43,7 @@ struct Channel {
 	uint32_t hz;
 	double power = 0;   // sum of the squared magnitude
 	uint64_t n = 0;     // samples behind that sum
-	int span = -1;      // which dongle centre measured it
+	int span = -1;
 	double snr = 0;     // dB above the noise floor of its own span
 	bool tested = false;
 	bool locked = false;
@@ -218,7 +218,6 @@ int sweep_main(const SweepArgs& a)
 		       rate / 1e6, (2 * usable_half(rate)) / 1e6);
 	}
 
-	// The dongle centres that cover the band, with a little overlap.
 	double half = usable_half(rate);
 	std::vector<double> centers;
 	if (a.band_hi - a.band_lo <= 2 * half) {

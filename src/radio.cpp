@@ -318,6 +318,7 @@ int radio_read(Radio* radio, float* iq, int n_complex)
 		return 0;
 	}
 	if (ret < 0) return -1;
+	if (ret > n_complex) ret = n_complex;
 	if (flags & SOAPY_SDR_END_ABRUPT) radio->overflows.fetch_add(1);
 	return ret;
 }

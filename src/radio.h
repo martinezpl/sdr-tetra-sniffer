@@ -6,7 +6,7 @@ struct Radio;
 
 struct RadioOpen {
 	uint32_t center_hz = 0;
-	uint32_t rate_hz = 0;   // 0: do not call setSampleRate yet
+	uint32_t rate_hz = 0;
 	int index = 0;
 	int gain_tenth_db = -1;
 	bool agc = false;
@@ -33,7 +33,7 @@ struct UsbId {
 
 struct RadioDetect {
 	RadioErr err;
-	const char* name;   // static, or nullptr
+	const char* name;
 };
 
 RadioErr radio_open(Radio** radio, const RadioOpen& cfg);
