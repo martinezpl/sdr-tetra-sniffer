@@ -1,18 +1,36 @@
 #include "radio.h"
 
+#include <SoapySDR/Device.hpp>
+#include <SoapySDR/Formats.h>
+
+#include <atomic>
 #include <chrono>
-#include <thread>
+#include <cmath>
+#include <condition_variable>
+#include <mutex>
+#include <string>
 #include <vector>
 
-struct Radio {
-	uint32_t center_hz = 0;
-	uint32_t rate_hz = 0;
-};
+enum class Fake { off, present, absent };
 
+static Fake g_fake = Fake::off;
+static Radio* g_fake_radio;
 static constexpr uint32_t kFakeNativeRate = 20000000;
 
-static bool g_plugged = false;
-static std::vector<float> g_iq;
+struct Radio {
+	bool fake = false;
+	uint32_t center_hz = 0;
+	uint32_t rate_hz = 0;
+	int gain_tenth_db = -1;
+	std::atomic<uint64_t> overflows{0};
+	std::atomic<bool> stopped{false};
+	std::string driver;
+	std::vector<float> iq;
+	std::mutex mu;
+	std::condition_variable cv;
+	SoapySDR::Device* dev = nullptr;
+	SoapySDR::Stream* stream = nullptr;
+};
 
 static const struct {
 	uint16_t vid;
@@ -31,65 +49,277 @@ static const struct {
 
 void radio_fake_plug(bool present)
 {
-	g_plugged = present;
+	g_fake = present ? Fake::present : Fake::absent;
 }
 
 void radio_fake_queue(const float* interleaved_iq, size_t n_complex)
 {
-	if (!interleaved_iq || n_complex == 0) return;
-	g_iq.insert(g_iq.end(), interleaved_iq, interleaved_iq + n_complex * 2);
+	if (!g_fake_radio || !interleaved_iq || n_complex == 0) return;
+	std::lock_guard<std::mutex> lock(g_fake_radio->mu);
+	g_fake_radio->iq.insert(g_fake_radio->iq.end(), interleaved_iq,
+				interleaved_iq + n_complex * 2);
+	g_fake_radio->cv.notify_all();
+}
+
+static void unmake(Radio* r)
+{
+	if (!r || !r->dev) return;
+	if (r->stream) {
+		try { r->dev->deactivateStream(r->stream); } catch (...) {}
+		try { r->dev->closeStream(r->stream); } catch (...) {}
+		r->stream = nullptr;
+	}
+	try { SoapySDR::Device::unmake(r->dev); } catch (...) {}
+	r->dev = nullptr;
+}
+
+static void discard(Radio* r)
+{
+	if (r->fake) {
+		std::lock_guard<std::mutex> lock(r->mu);
+		r->iq.clear();
+		return;
+	}
+	if (!r->dev || !r->stream) return;
+	try {
+		r->dev->deactivateStream(r->stream);
+		r->dev->activateStream(r->stream);
+	} catch (...) {}
+}
+
+static RadioErr soapy_open(Radio* r, const RadioOpen& cfg)
+{
+	SoapySDR::KwargsList devs;
+	try {
+		devs = SoapySDR::Device::enumerate();
+	} catch (...) {
+		return RadioErr::not_found;
+	}
+	if (devs.empty()) return RadioErr::not_found;
+	if (cfg.index < 0 || (size_t)cfg.index >= devs.size()) return RadioErr::bad_index;
+	try {
+		r->dev = SoapySDR::Device::make(devs[(size_t)cfg.index]);
+	} catch (...) {
+		return RadioErr::busy;
+	}
+	if (!r->dev) return RadioErr::busy;
+	try {
+		r->driver = r->dev->getDriverKey();
+	} catch (...) {
+		r->driver.clear();
+	}
+	try {
+		r->stream = r->dev->setupStream(SOAPY_SDR_RX, SOAPY_SDR_CF32);
+		if (!r->stream || r->dev->activateStream(r->stream) != 0) {
+			unmake(r);
+			return RadioErr::busy;
+		}
+	} catch (...) {
+		unmake(r);
+		return RadioErr::busy;
+	}
+	if (cfg.rate_hz) {
+		try {
+			r->dev->setSampleRate(SOAPY_SDR_RX, 0, cfg.rate_hz);
+			double got = r->dev->getSampleRate(SOAPY_SDR_RX, 0);
+			r->rate_hz = got > 0 ? (uint32_t)got : cfg.rate_hz;
+		} catch (...) {
+			unmake(r);
+			return RadioErr::bad_rate;
+		}
+	}
+	try {
+		r->dev->setFrequency(SOAPY_SDR_RX, 0, cfg.center_hz);
+		r->center_hz = cfg.center_hz;
+	} catch (...) {
+		unmake(r);
+		return RadioErr::bad_tune;
+	}
+	try {
+		if (cfg.gain_tenth_db < 0) {
+			r->dev->setGainMode(SOAPY_SDR_RX, 0, true);
+			r->gain_tenth_db = -1;
+		} else {
+			r->dev->setGainMode(SOAPY_SDR_RX, 0, false);
+			r->dev->setGain(SOAPY_SDR_RX, 0, cfg.gain_tenth_db / 10.0);
+			r->gain_tenth_db = (int)llround(r->dev->getGain(SOAPY_SDR_RX, 0) * 10);
+		}
+	} catch (...) {
+		unmake(r);
+		return RadioErr::bad_gain;
+	}
+	if (r->driver == "rtlsdr") {
+		try {
+			for (const auto& info : r->dev->getSettingInfo()) {
+				if (info.key != "digital_agc") continue;
+				r->dev->writeSetting("digital_agc", cfg.agc ? "true" : "false");
+				break;
+			}
+		} catch (...) {
+		}
+	}
+	discard(r);
+	return RadioErr::ok;
 }
 
 RadioErr radio_open(Radio** radio, const RadioOpen& cfg)
 {
 	if (!radio) return RadioErr::refused;
-	if (!g_plugged) return RadioErr::not_found;
+	if (g_fake == Fake::absent) return RadioErr::not_found;
+	if (g_fake == Fake::present) {
+		auto* r = new Radio;
+		r->fake = true;
+		r->driver = "fake";
+		r->center_hz = cfg.center_hz;
+		r->rate_hz = cfg.rate_hz;
+		r->gain_tenth_db = cfg.gain_tenth_db < 0 ? -1 : cfg.gain_tenth_db;
+		g_fake_radio = r;
+		*radio = r;
+		return RadioErr::ok;
+	}
 	auto* r = new Radio;
-	r->center_hz = cfg.center_hz;
-	r->rate_hz = cfg.rate_hz ? cfg.rate_hz : kFakeNativeRate;
+	RadioErr err = soapy_open(r, cfg);
+	if (err != RadioErr::ok) {
+		delete r;
+		return err;
+	}
 	*radio = r;
 	return RadioErr::ok;
 }
 
+void radio_stop(Radio* radio)
+{
+	if (!radio) return;
+	radio->stopped.store(true);
+	radio->cv.notify_all();
+	if (radio->dev && radio->stream) {
+		try { radio->dev->deactivateStream(radio->stream); } catch (...) {}
+	}
+}
+
 void radio_close(Radio* radio)
 {
+	if (!radio) return;
+	radio_stop(radio);
+	if (g_fake_radio == radio) g_fake_radio = nullptr;
+	unmake(radio);
 	delete radio;
 }
 
 RadioErr radio_set_center(Radio* radio, uint32_t center_hz)
 {
 	if (!radio) return RadioErr::refused;
+	if (!radio->fake) {
+		try {
+			radio->dev->setFrequency(SOAPY_SDR_RX, 0, center_hz);
+		} catch (...) {
+			return RadioErr::bad_tune;
+		}
+	}
 	radio->center_hz = center_hz;
-	g_iq.clear();
+	discard(radio);
 	return RadioErr::ok;
 }
 
 RadioErr radio_set_rate(Radio* radio, uint32_t rate_hz)
 {
 	if (!radio) return RadioErr::refused;
-	radio->rate_hz = rate_hz;
-	g_iq.clear();
+	if (!radio->fake) {
+		try {
+			radio->dev->setSampleRate(SOAPY_SDR_RX, 0, rate_hz);
+			double got = radio->dev->getSampleRate(SOAPY_SDR_RX, 0);
+			radio->rate_hz = got > 0 ? (uint32_t)got : rate_hz;
+		} catch (...) {
+			return RadioErr::bad_rate;
+		}
+	} else {
+		radio->rate_hz = rate_hz;
+	}
+	discard(radio);
 	return RadioErr::ok;
 }
 
 uint32_t radio_max_rate(Radio* radio, uint32_t wanted)
 {
 	if (!radio) return 0;
-	return wanted && kFakeNativeRate > wanted ? wanted : kFakeNativeRate;
+	if (radio->fake)
+		return wanted && kFakeNativeRate > wanted ? wanted : kFakeNativeRate;
+	uint32_t best = 0;
+	auto take = [&](double hz) {
+		if (hz <= 0) return;
+		uint32_t u = (uint32_t)hz;
+		if (wanted && u > wanted) return;
+		if (u > best) best = u;
+	};
+	try {
+		auto listed = radio->dev->listSampleRates(SOAPY_SDR_RX, 0);
+		if (!listed.empty()) {
+			for (double r : listed) take(r);
+			return best;
+		}
+		for (const auto& range : radio->dev->getSampleRateRange(SOAPY_SDR_RX, 0)) {
+			double hi = range.maximum();
+			if (wanted && hi > wanted) hi = wanted;
+			if (hi >= range.minimum()) take(hi);
+		}
+	} catch (...) {
+	}
+	return best;
+}
+
+uint32_t radio_rate(const Radio* radio)
+{
+	return radio ? radio->rate_hz : 0;
+}
+
+const char* radio_driver(const Radio* radio)
+{
+	return radio ? radio->driver.c_str() : "";
+}
+
+int radio_gain_tenth_db(const Radio* radio)
+{
+	return radio ? radio->gain_tenth_db : -1;
+}
+
+uint64_t radio_overflows(const Radio* radio)
+{
+	return radio ? radio->overflows.load() : 0;
 }
 
 int radio_read(Radio* radio, float* iq, int n_complex)
 {
-	if (!radio || !iq || n_complex <= 0) return 0;
-	if (g_iq.empty())
-		std::this_thread::sleep_for(std::chrono::milliseconds(100));
-	if (g_iq.empty()) return 0;
-	int n = (int)g_iq.size() / 2;
-	if (n > n_complex) n = n_complex;
-	for (int i = 0; i < n * 2; i++)
-		iq[i] = g_iq[i];
-	g_iq.erase(g_iq.begin(), g_iq.begin() + n * 2);
-	return n;
+	if (!radio || !iq || n_complex <= 0) return radio && radio->stopped.load() ? -1 : 0;
+	if (radio->stopped.load()) return -1;
+	if (radio->fake) {
+		std::unique_lock<std::mutex> lock(radio->mu);
+		if (radio->iq.empty())
+			radio->cv.wait_for(lock, std::chrono::milliseconds(RADIO_READ_TIMEOUT_MS),
+					   [&] { return radio->stopped.load() || !radio->iq.empty(); });
+		if (radio->stopped.load()) return -1;
+		if (radio->iq.empty()) return 0;
+		int n = (int)radio->iq.size() / 2;
+		if (n > n_complex) n = n_complex;
+		for (int i = 0; i < n * 2; i++)
+			iq[i] = radio->iq[i];
+		radio->iq.erase(radio->iq.begin(), radio->iq.begin() + n * 2);
+		return n;
+	}
+	if (!radio->dev || !radio->stream) return -1;
+	void* buffs[] = { iq };
+	int flags = 0;
+	long long timeNs = 0;
+	int ret = radio->dev->readStream(radio->stream, buffs, (size_t)n_complex, flags, timeNs,
+					 (long)RADIO_READ_TIMEOUT_MS * 1000);
+	if (radio->stopped.load()) return -1;
+	if (ret == SOAPY_SDR_TIMEOUT) return 0;
+	if (ret == SOAPY_SDR_OVERFLOW) {
+		radio->overflows.fetch_add(1);
+		return 0;
+	}
+	if (ret < 0) return -1;
+	if (flags & SOAPY_SDR_END_ABRUPT) radio->overflows.fetch_add(1);
+	return ret;
 }
 
 const char* radio_error(RadioErr err)
@@ -97,12 +327,16 @@ const char* radio_error(RadioErr err)
 	switch (err) {
 	case RadioErr::ok: return "ok";
 	case RadioErr::not_found: return "no SDR found";
-	case RadioErr::not_recognized: return "SDR not recognized";
-	case RadioErr::busy: return "busy";
-	case RadioErr::refused: return "refused";
-	case RadioErr::bad_index: return "bad index";
+	case RadioErr::not_recognized: return "the SDR was not recognized";
+	case RadioErr::busy:
+		return "the receiver did not open (quit SDR++ if it holds the dongle)";
+	case RadioErr::refused: return "the receiver refused the request";
+	case RadioErr::bad_index: return "there is no receiver at that device index";
+	case RadioErr::bad_rate: return "the receiver did not take the sample rate";
+	case RadioErr::bad_tune: return "the receiver did not tune";
+	case RadioErr::bad_gain: return "the receiver did not take the tuner gain";
 	}
-	return "unknown";
+	return "the receiver failed for an unknown reason";
 }
 
 RadioDetect radio_detect(size_t soapy_count, const UsbId* ids, size_t n)
