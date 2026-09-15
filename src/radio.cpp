@@ -4,18 +4,29 @@
 #include <SoapySDR/Formats.h>
 
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <mutex>
 #include <string>
 #include <vector>
+
+#ifdef __linux__
+#include <dirent.h>
+#endif
 
 enum class Fake { off, present, absent };
 
 static Fake g_fake = Fake::off;
 static Radio* g_fake_radio;
 static constexpr uint32_t kFakeNativeRate = 20000000;
+static char g_last_error[96];
+static std::vector<UsbId> g_usb_fake;
+static bool g_usb_fake_on = false;
 
 struct Radio {
 	bool fake = false;
@@ -32,24 +43,157 @@ struct Radio {
 	SoapySDR::Stream* stream = nullptr;
 };
 
-static const struct {
-	uint16_t vid;
-	uint16_t pid;
+struct Known {
+	uint16_t vid, pid;
 	const char* name;
-} kKnown[] = {
-	{0x0bda, 0x2838, "RTL-SDR"},
-	{0x0bda, 0x2832, "RTL-SDR"},
-	{0x1d50, 0x6089, "HackRF"},
-	{0x1d50, 0x60a1, "Airspy"},
-	{0x2cf0, 0x5250, "bladeRF"},
-	{0x0403, 0x601f, "LimeSDR"},
-	{0x0456, 0xb673, "Pluto"},
-	{0x1df7, 0x3000, "SDRplay"},
+	const char* deb;
+	const char* brew;
+};
+
+static const Known kKnown[] = {
+	{0x0bda, 0x2838, "RTL-SDR", "soapysdr-module-rtlsdr", "soapyrtlsdr"},
+	{0x0bda, 0x2832, "RTL-SDR", "soapysdr-module-rtlsdr", "soapyrtlsdr"},
+	{0x1d50, 0x6089, "HackRF", "soapysdr-module-hackrf", "soapyhackrf"},
+	{0x1d50, 0x604b, "HackRF", "soapysdr-module-hackrf", "soapyhackrf"},
+	{0x1d50, 0x60a1, "Airspy", "soapysdr-module-airspy", "soapyairspy"},
+	{0x2cf0, 0x5250, "bladeRF", "soapysdr-module-bladerf", nullptr},
+	{0x0403, 0x601f, "LimeSDR", "soapysdr-module-lms7", nullptr},
+	{0x0456, 0xb673, "Pluto", "soapysdr-module-plutosdr", nullptr},
+	{0x1df7, 0x3000, "SDRplay", "soapysdr-module-sdrplay", nullptr},
 };
 
 void radio_fake_plug(bool present)
 {
 	g_fake = present ? Fake::present : Fake::absent;
+}
+
+void radio_fake_usb(const UsbId* ids, size_t n)
+{
+	if (!ids && n == 0) {
+		g_usb_fake_on = false;
+		g_usb_fake.clear();
+		return;
+	}
+	g_fake = Fake::off;
+	g_usb_fake_on = true;
+	g_usb_fake.clear();
+	if (ids && n) g_usb_fake.assign(ids, ids + n);
+}
+
+#ifdef __APPLE__
+static bool ioreg_int(const char* line, const char* key, uint32_t* out)
+{
+	char pat[32];
+	snprintf(pat, sizeof pat, "\"%s\"", key);
+	const char* p = strstr(line, pat);
+	if (!p) return false;
+	p = strchr(p, '=');
+	if (!p) return false;
+	p++;
+	while (*p == ' ') p++;
+	if (*p == '<') {
+		unsigned b0 = 0, b1 = 0;
+		if (sscanf(p + 1, "%2x%2x", &b0, &b1) != 2) return false;
+		*out = b0 | (b1 << 8);
+		return *out <= 0xffff;
+	}
+	char* end = nullptr;
+	unsigned long v = strtoul(p, &end, 0);
+	if (end == p || v > 0xffff) return false;
+	*out = (uint32_t)v;
+	return true;
+}
+
+static void scan_ioreg(const char* cmd, std::vector<UsbId>& out)
+{
+	FILE* pipe = popen(cmd, "r");
+	if (!pipe) return;
+	char line[1024];
+	int vid = -1, pid = -1;
+	while (fgets(line, sizeof line, pipe)) {
+		uint32_t v = 0;
+		if (ioreg_int(line, "idVendor", &v) || ioreg_int(line, "vendor-id", &v))
+			vid = (int)v;
+		if (ioreg_int(line, "idProduct", &v) || ioreg_int(line, "product-id", &v))
+			pid = (int)v;
+		if (vid >= 0 && pid >= 0) {
+			out.push_back({(uint16_t)vid, (uint16_t)pid});
+			vid = pid = -1;
+		}
+	}
+	pclose(pipe);
+}
+
+static void scan_profiler(std::vector<UsbId>& out)
+{
+	FILE* pipe = popen("system_profiler SPUSBDataType", "r");
+	if (!pipe) return;
+	char line[1024];
+	int vid = -1, pid = -1;
+	while (fgets(line, sizeof line, pipe)) {
+		unsigned v = 0;
+		if (const char* p = strstr(line, "Vendor ID:")) {
+			if (sscanf(p, "Vendor ID: 0x%x", &v) == 1) vid = (int)v;
+		}
+		if (const char* p = strstr(line, "Product ID:")) {
+			if (sscanf(p, "Product ID: 0x%x", &v) == 1) pid = (int)v;
+		}
+		if (vid >= 0 && pid >= 0) {
+			out.push_back({(uint16_t)vid, (uint16_t)pid});
+			vid = pid = -1;
+		}
+	}
+	pclose(pipe);
+}
+#endif
+
+static std::vector<UsbId> list_os_usb()
+{
+	std::vector<UsbId> out;
+#ifdef __linux__
+	DIR* dir = opendir("/sys/bus/usb/devices");
+	if (!dir) return out;
+	while (dirent* e = readdir(dir)) {
+		if (e->d_name[0] == '.') continue;
+		char vpath[512], ppath[512];
+		snprintf(vpath, sizeof vpath, "/sys/bus/usb/devices/%s/idVendor", e->d_name);
+		snprintf(ppath, sizeof ppath, "/sys/bus/usb/devices/%s/idProduct", e->d_name);
+		FILE* fv = fopen(vpath, "r");
+		FILE* fp = fopen(ppath, "r");
+		unsigned vid = 0, pid = 0;
+		if (fv && fp && fscanf(fv, "%x", &vid) == 1 && fscanf(fp, "%x", &pid) == 1)
+			out.push_back({(uint16_t)vid, (uint16_t)pid});
+		if (fv) fclose(fv);
+		if (fp) fclose(fp);
+	}
+	closedir(dir);
+#elif defined(__APPLE__)
+	scan_ioreg("ioreg -p IOUSB -l", out);
+	if (out.empty()) scan_ioreg("ioreg -l -c IOUSBHostDevice", out);
+	if (out.empty()) scan_profiler(out);
+#endif
+	return out;
+}
+
+static std::vector<UsbId> list_usb()
+{
+	if (g_usb_fake_on) return g_usb_fake;
+	return list_os_usb();
+}
+
+static void set_not_recognized(const char* name)
+{
+	const char* pkg = "";
+	for (const auto& d : kKnown) {
+		if (strcmp(d.name, name) != 0) continue;
+#ifdef __APPLE__
+		pkg = d.brew ? d.brew : d.deb;
+#else
+		pkg = d.deb;
+#endif
+		break;
+	}
+	snprintf(g_last_error, sizeof g_last_error, "%s found, install %s", name, pkg);
 }
 
 void radio_fake_queue(const float* interleaved_iq, size_t n_complex)
@@ -95,7 +239,13 @@ static RadioErr soapy_open(Radio* r, const RadioOpen& cfg)
 	} catch (...) {
 		return RadioErr::not_found;
 	}
-	if (devs.empty()) return RadioErr::not_found;
+	if (devs.empty()) {
+		if (cfg.index != 0) return RadioErr::bad_index;
+		auto ids = list_usb();
+		RadioDetect d = radio_detect(0, ids.empty() ? nullptr : ids.data(), ids.size());
+		if (d.err == RadioErr::not_recognized && d.name) set_not_recognized(d.name);
+		return d.err;
+	}
 	if (cfg.index < 0 || (size_t)cfg.index >= devs.size()) return RadioErr::bad_index;
 	try {
 		r->dev = SoapySDR::Device::make(devs[(size_t)cfg.index]);
@@ -105,6 +255,7 @@ static RadioErr soapy_open(Radio* r, const RadioOpen& cfg)
 	if (!r->dev) return RadioErr::busy;
 	try {
 		r->driver = r->dev->getDriverKey();
+		for (char& c : r->driver) c = (char)std::tolower((unsigned char)c);
 	} catch (...) {
 		r->driver.clear();
 	}
@@ -165,7 +316,14 @@ static RadioErr soapy_open(Radio* r, const RadioOpen& cfg)
 RadioErr radio_open(Radio** radio, const RadioOpen& cfg)
 {
 	if (!radio) return RadioErr::refused;
+	g_last_error[0] = 0;
 	if (g_fake == Fake::absent) return RadioErr::not_found;
+	if (g_usb_fake_on) {
+		RadioDetect d = radio_detect(0, g_usb_fake.empty() ? nullptr : g_usb_fake.data(),
+					     g_usb_fake.size());
+		if (d.err == RadioErr::not_recognized && d.name) set_not_recognized(d.name);
+		return d.err;
+	}
 	if (g_fake == Fake::present) {
 		auto* r = new Radio;
 		r->fake = true;
@@ -328,7 +486,8 @@ const char* radio_error(RadioErr err)
 	switch (err) {
 	case RadioErr::ok: return "ok";
 	case RadioErr::not_found: return "no SDR found";
-	case RadioErr::not_recognized: return "the SDR was not recognized";
+	case RadioErr::not_recognized:
+		return g_last_error[0] ? g_last_error : "the SDR was not recognized";
 	case RadioErr::busy:
 		return "the receiver did not open (quit SDR++ if it holds the dongle)";
 	case RadioErr::refused: return "the receiver refused the request";

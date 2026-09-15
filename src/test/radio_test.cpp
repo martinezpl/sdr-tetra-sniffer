@@ -147,24 +147,53 @@ int main()
 		RadioDetect empty = radio_detect(0, nullptr, 0);
 		check(empty.err == RadioErr::not_found, "empty not_found");
 
+		UsbId rtl{0x0bda, 0x2838};
+		RadioDetect r8 = radio_detect(0, &rtl, 1);
+		check(r8.err == RadioErr::not_recognized && r8.name && std::strcmp(r8.name, "RTL-SDR") == 0,
+		      "RTL-SDR");
+		check(radio_detect(1, &rtl, 1).err == RadioErr::ok, "RTL + soapy");
+
 		UsbId hackrf{0x1d50, 0x6089};
 		RadioDetect h = radio_detect(0, &hackrf, 1);
 		check(h.err == RadioErr::not_recognized && h.name && std::strcmp(h.name, "HackRF") == 0,
 		      "HackRF");
+		check(radio_detect(1, &hackrf, 1).err == RadioErr::ok, "HackRF + soapy");
 
 		UsbId airspy{0x1d50, 0x60a1};
 		RadioDetect a = radio_detect(0, &airspy, 1);
 		check(a.err == RadioErr::not_recognized && a.name && std::strcmp(a.name, "Airspy") == 0,
 		      "Airspy");
 
+		UsbId sdrplay{0x1df7, 0x3000};
+		check(radio_detect(0, &sdrplay, 1).err == RadioErr::not_recognized, "SDRplay");
+
 		UsbId unknown{0x1234, 0x0001};
 		RadioDetect u = radio_detect(0, &unknown, 1);
 		check(u.err == RadioErr::not_found, "unknown not_found");
+
+		UsbId usrp{0x2500, 0x0020};
+		check(radio_detect(0, &usrp, 1).err == RadioErr::not_found, "USRP not in table");
 
 		RadioDetect soapy = radio_detect(1, nullptr, 0);
 		check(soapy.err == RadioErr::ok, "soapy ok");
 
 		pass("radio_detect");
+	}
+
+	{
+		UsbId rtl{0x0bda, 0x2838};
+		radio_fake_usb(&rtl, 1);
+		Radio* poison = (Radio*)0x1;
+		RadioOpen cfg{};
+		RadioErr err = radio_open(&poison, cfg);
+		check(err == RadioErr::not_recognized, "open known USB");
+		check(poison == (Radio*)0x1, "handle unchanged");
+		const char* msg = radio_error(RadioErr::not_recognized);
+		check(std::strstr(msg, "soapysdr-module-") != nullptr ||
+			      std::strstr(msg, "soapy") != nullptr,
+		      "module package");
+		radio_fake_usb(nullptr, 0);
+		pass("radio_open not_recognized");
 	}
 
 	return 0;

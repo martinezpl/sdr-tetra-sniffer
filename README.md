@@ -33,6 +33,10 @@
 The sniffer was developed against an RTL-SDR Blog V4 with an R828D tuner.
 It opens the receiver through SoapySDR, so any device with a Soapy module
 works. Install SoapySDR first, then the module for your receiver.
+A live run auto-detects a known USB stick when Soapy finds no module.
+No stick prints `no SDR found`. A known stick without its module prints
+`<name> found, install <module>`. USRP is not auto-detected. Without
+`soapysdr-module-uhd` it stays `no SDR found`.
 
 For a receiver with no module, the IQ feed can be piped in instead:
 
@@ -66,6 +70,19 @@ its four cores, at 92 MB for the whole tree.
 sudo apt install build-essential cmake git curl unzip libvolk-dev libsoapysdr-dev soapysdr-module-rtlsdr  # Debian, Raspberry Pi OS
 brew install cmake volk soapysdr soapyrtlsdr                                                              # macOS
 ```
+
+Soapy modules, one per receiver. Debian first, then Homebrew.
+
+| Receiver | Debian | Homebrew |
+| --- | --- | --- |
+| RTL-SDR | `soapysdr-module-rtlsdr` | `soapyrtlsdr` |
+| HackRF | `soapysdr-module-hackrf` | `soapyhackrf` |
+| Airspy | `soapysdr-module-airspy` | `soapyairspy` (Pothos tap if brew-core does not have it) |
+| bladeRF | `soapysdr-module-bladerf` | not in brew-core |
+| LimeSDR | `soapysdr-module-lms7` | not in brew-core |
+| USRP | `soapysdr-module-uhd` | not in brew-core |
+| Pluto | `soapysdr-module-plutosdr` | not in brew-core |
+| SDRplay | `soapysdr-module-sdrplay` | not in brew-core |
 
 `librtlsdr` is a dependency of the RTL-SDR Soapy module. The sniffer links
 SoapySDR, not `librtlsdr`.
