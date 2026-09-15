@@ -14,7 +14,6 @@ static constexpr uint32_t kFakeNativeRate = 20000000;
 static bool g_plugged = false;
 static std::vector<float> g_iq;
 
-// VID+PID: HackRF and Airspy share 0x1d50.
 static const struct {
 	uint16_t vid;
 	uint16_t pid;
