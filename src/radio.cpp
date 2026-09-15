@@ -89,11 +89,61 @@ static bool ioreg_int(const char* line, const char* key, uint32_t* out)
 	if (!p) return false;
 	p = strchr(p, '=');
 	if (!p) return false;
+	p++;
+	while (*p == ' ') p++;
+	if (*p == '<') {
+		unsigned b0 = 0, b1 = 0;
+		if (sscanf(p + 1, "%2x%2x", &b0, &b1) != 2) return false;
+		*out = b0 | (b1 << 8);
+		return *out <= 0xffff;
+	}
 	char* end = nullptr;
-	unsigned long v = strtoul(p + 1, &end, 0);
-	if (end == p + 1 || v > 0xffff) return false;
+	unsigned long v = strtoul(p, &end, 0);
+	if (end == p || v > 0xffff) return false;
 	*out = (uint32_t)v;
 	return true;
+}
+
+static void scan_ioreg(const char* cmd, std::vector<UsbId>& out)
+{
+	FILE* pipe = popen(cmd, "r");
+	if (!pipe) return;
+	char line[1024];
+	int vid = -1, pid = -1;
+	while (fgets(line, sizeof line, pipe)) {
+		uint32_t v = 0;
+		if (ioreg_int(line, "idVendor", &v) || ioreg_int(line, "vendor-id", &v))
+			vid = (int)v;
+		if (ioreg_int(line, "idProduct", &v) || ioreg_int(line, "product-id", &v))
+			pid = (int)v;
+		if (vid >= 0 && pid >= 0) {
+			out.push_back({(uint16_t)vid, (uint16_t)pid});
+			vid = pid = -1;
+		}
+	}
+	pclose(pipe);
+}
+
+static void scan_profiler(std::vector<UsbId>& out)
+{
+	FILE* pipe = popen("system_profiler SPUSBDataType", "r");
+	if (!pipe) return;
+	char line[1024];
+	int vid = -1, pid = -1;
+	while (fgets(line, sizeof line, pipe)) {
+		unsigned v = 0;
+		if (const char* p = strstr(line, "Vendor ID:")) {
+			if (sscanf(p, "Vendor ID: 0x%x", &v) == 1) vid = (int)v;
+		}
+		if (const char* p = strstr(line, "Product ID:")) {
+			if (sscanf(p, "Product ID: 0x%x", &v) == 1) pid = (int)v;
+		}
+		if (vid >= 0 && pid >= 0) {
+			out.push_back({(uint16_t)vid, (uint16_t)pid});
+			vid = pid = -1;
+		}
+	}
+	pclose(pipe);
 }
 #endif
 
@@ -118,20 +168,9 @@ static std::vector<UsbId> list_os_usb()
 	}
 	closedir(dir);
 #elif defined(__APPLE__)
-	FILE* pipe = popen("ioreg -p IOUSB -l", "r");
-	if (!pipe) return out;
-	char line[1024];
-	int vid = -1, pid = -1;
-	while (fgets(line, sizeof line, pipe)) {
-		uint32_t v = 0;
-		if (ioreg_int(line, "idVendor", &v)) vid = (int)v;
-		if (ioreg_int(line, "idProduct", &v)) pid = (int)v;
-		if (vid >= 0 && pid >= 0) {
-			out.push_back({(uint16_t)vid, (uint16_t)pid});
-			vid = pid = -1;
-		}
-	}
-	pclose(pipe);
+	scan_ioreg("ioreg -p IOUSB -l", out);
+	if (out.empty()) scan_ioreg("ioreg -l -c IOUSBHostDevice", out);
+	if (out.empty()) scan_profiler(out);
 #endif
 	return out;
 }
