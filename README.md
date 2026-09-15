@@ -30,10 +30,11 @@
 ## Prerequisites
 
 ### SDR receiver 
-The sniffer was developed against an RTL-SDR Blog V4 with an R828D tuner. 
-It links `librtlsdr`, so that is the only device it tunes on its own.
+The sniffer was developed against an RTL-SDR Blog V4 with an R828D tuner.
+It opens the receiver through SoapySDR, so any device with a Soapy module
+works. Install SoapySDR first, then the module for your receiver.
 
-For any other SDR receiver, the IQ feed can be piped in instead:
+For a receiver with no module, the IQ feed can be piped in instead:
 
 ```
 <your sdr tool writing IQ to stdout> \
@@ -62,9 +63,12 @@ its four cores, at 92 MB for the whole tree.
 ### Packages
 
 ```
-sudo apt install build-essential cmake git curl unzip libvolk-dev librtlsdr-dev  # Debian, Raspberry Pi OS
-brew install cmake volk librtlsdr                                               # macOS
+sudo apt install build-essential cmake git curl unzip libvolk-dev libsoapysdr-dev soapysdr-module-rtlsdr  # Debian, Raspberry Pi OS
+brew install cmake volk soapysdr soapyrtlsdr                                                              # macOS
 ```
+
+`librtlsdr` is a dependency of the RTL-SDR Soapy module. The sniffer links
+SoapySDR, not `librtlsdr`.
 
 CMake 3.16 or later is needed. `curl`, `unzip` and `patch` must be on the
 `PATH` for the codec step of the build. That step on macOS also needs
@@ -106,7 +110,9 @@ cd sdr-tetra-sniffer
 ```
 
 `run` exposes every setting as a flag. Ctrl-C, SIGTERM, or the end of the
-input stops a run and closes the files cleanly. Logs go to stdout.
+input stops a run and closes the files cleanly. Logs go to stdout. A live
+run prints `radio rtlsdr 0`, or the Soapy driver key of the device that
+opened.
 
 ```
 nohup ./tetra-sniff run --carriers 419162500,419562500 \
@@ -402,8 +408,6 @@ src/test/run.sh BASEBAND.wav HZ1 HZ2  # checks against a real capture
 See [CONTRIBUTING.md](CONTRIBUTING.md) for how to ensure no regressions.
 
 ## To be optimized
-
-**Native support for other SDR receivers**
 
 **The parent is the only serial stage.** It is the one process that touches
 the full-rate stream, and its channelizer loop runs on one thread. Each
