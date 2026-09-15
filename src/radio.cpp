@@ -318,6 +318,12 @@ RadioErr radio_open(Radio** radio, const RadioOpen& cfg)
 	if (!radio) return RadioErr::refused;
 	g_last_error[0] = 0;
 	if (g_fake == Fake::absent) return RadioErr::not_found;
+	if (g_usb_fake_on) {
+		RadioDetect d = radio_detect(0, g_usb_fake.empty() ? nullptr : g_usb_fake.data(),
+					     g_usb_fake.size());
+		if (d.err == RadioErr::not_recognized && d.name) set_not_recognized(d.name);
+		return d.err;
+	}
 	if (g_fake == Fake::present) {
 		auto* r = new Radio;
 		r->fake = true;
