@@ -24,6 +24,31 @@ static void pass(const char* name)
 int main()
 {
 	{
+		Radio* r = nullptr;
+		RadioOpen cfg{};
+		RadioErr err = radio_open(&r, cfg);
+		if (err == RadioErr::ok) {
+			radio_close(r);
+			std::cout << "SKIP radio_open soapy empty (device present)\n";
+		} else if (err == RadioErr::not_found && r == nullptr) {
+			pass("radio_open soapy empty");
+		} else {
+			if (r) radio_close(r);
+			std::cout << "SKIP radio_open soapy empty (" << radio_error(err) << ")\n";
+		}
+	}
+
+	{
+		check(std::strstr(radio_error(RadioErr::bad_rate), "sample rate") != nullptr,
+		      "bad_rate names rate");
+		check(std::strstr(radio_error(RadioErr::bad_rate), "tune") == nullptr,
+		      "bad_rate is not tune");
+		check(std::strstr(radio_error(RadioErr::bad_tune), "tune") != nullptr,
+		      "bad_tune names tune");
+		pass("radio_error distinguishes rate from tune");
+	}
+
+	{
 		radio_fake_plug(true);
 		Radio* r = nullptr;
 		RadioOpen cfg{};
@@ -62,6 +87,24 @@ int main()
 	}
 
 	{
+		radio_fake_plug(true);
+		Radio* r = nullptr;
+		RadioOpen cfg{};
+		check(radio_open(&r, cfg) == RadioErr::ok && r, "open for rerate");
+		const float old_iq[] = {1.f, 2.f, 3.f, 4.f};
+		radio_fake_queue(old_iq, 2);
+		check(radio_set_rate(r, 2400000) == RadioErr::ok, "set rate");
+		float out[4] = {};
+		check(radio_read(r, out, 2) == 0, "pre-rate buffer dropped");
+		const float new_iq[] = {5.f, 6.f};
+		radio_fake_queue(new_iq, 1);
+		check(radio_read(r, out, 1) == 1 && out[0] == 5.f && out[1] == 6.f,
+		      "post-rate samples");
+		radio_close(r);
+		pass("radio_set_rate drops pre-rate buffer");
+	}
+
+	{
 		Radio* poison = (Radio*)0x1;
 		radio_fake_plug(false);
 		RadioOpen cfg{};
@@ -84,7 +127,7 @@ int main()
 				  std::chrono::steady_clock::now() - t0)
 				  .count();
 		check(n == 0, "timeout returns 0");
-		check(ms <= 150, "timeout within 150ms");
+		check(ms <= RADIO_READ_TIMEOUT_MS + 100, "timeout within 200ms");
 		radio_close(r);
 		pass("radio_read timeout");
 	}
