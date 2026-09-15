@@ -52,3 +52,4 @@ RadioDetect radio_detect(size_t soapy_count, const UsbId* ids, size_t n);
 
 void radio_fake_plug(bool present);
 void radio_fake_queue(const float* interleaved_iq, size_t n_complex);
+void radio_fake_usb(const UsbId* ids, size_t n);
