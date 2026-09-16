@@ -113,9 +113,6 @@ static const char* USAGE =
 	"  --gain DB          Tuner gain of 0 to 100 dB, or \"auto\". The tuner takes\n"
 	"                     the nearest gain that it supports, and the start line\n"
 	"                     reports the gain that it took. Default auto.\n"
-	"  --agc              Turn on the digital AGC of an RTL-SDR. It is off by\n"
-	"                     default, and it is separate from the gain of the tuner.\n"
-	"                     Other receivers ignore this flag.\n"
 	"  --device INDEX     Index of the receiver. Default 0.\n"
 	"                     A live run auto-detects the receiver through SoapySDR.\n"
 	"                     If Soapy finds none, USB is scanned for a known stick.\n"
@@ -194,7 +191,7 @@ static const char* USAGE =
 	"  --max-carriers N   How many candidates the decode stage takes, strongest\n"
 	"                     first. Default 15.\n"
 	"\n"
-	"\"sweep\" also takes --rate, --gain, --agc, --device and --tune-offset, with the\n"
+	"\"sweep\" also takes --rate, --gain, --device and --tune-offset, with the\n"
 	"same defaults as \"run\".\n"
 	"\n"
 	"Close SDR++ before a run if it holds the receiver.\n";
@@ -211,7 +208,6 @@ struct Args {
 	int device = 0;
 	// Below zero means the automatic gain of the tuner.
 	double gain_db = -1;
-	bool agc = false;
 	bool per_carrier = false;
 	size_t max_gssi = DEFAULT_MAX_GSSI;
 	size_t max_carriers = DEFAULT_MAX_CARRIERS;
@@ -295,7 +291,7 @@ static SweepArgs parse_sweep_args(int argc, char** argv)
 	// with no arguments finds a network wherever it sits in it. A rate of 0
 	// means "ask the receiver for the widest span it can give".
 	SweepArgs s = { 380000000, 430000000, 0, 12500, DEFAULT_TUNE_OFFSET,
-			-1, false, 0, 0.2, 15, 6, 15 };
+			-1, 0, 0.2, 15, 6, 15 };
 	for (int i = 1; i < argc; i++) {
 		std::string t = argv[i];
 		auto val = [&]() -> std::string { if (++i >= argc) die(t + " needs a value"); return argv[i]; };
@@ -315,7 +311,6 @@ static SweepArgs parse_sweep_args(int argc, char** argv)
 		else if (t == "--rate") s.rate = parse_double(val(), "--rate");
 		else if (t == "--tune-offset") s.tune_offset = parse_double(val(), "--tune-offset");
 		else if (t == "--device") s.device = (int)parse_ulong(val(), 255, "--device");
-		else if (t == "--agc") s.agc = true;
 		else if (t == "--gain") {
 			std::string g = val();
 			s.gain_db = g == "auto" ? -1 : parse_double(g, "--gain");
@@ -358,7 +353,6 @@ static Args parse_args(int argc, char** argv)
 			if (g != "auto" && (a.gain_db < 0 || a.gain_db > 100))
 				die("--gain needs a gain of 0 to 100 dB, or \"auto\"");
 		}
-		else if (s == "--agc") a.agc = true;
 		else if (s == "--per-carrier") a.per_carrier = true;
 		else if (s == "--max-gssi") a.max_gssi = parse_count(val(), "--max-gssi");
 		else if (s == "--queue-blocks") a.queue_blocks = parse_count(val(), "--queue-blocks");
@@ -798,7 +792,6 @@ int main(int argc, char** argv)
 		cfg.rate_hz = (uint32_t)src.rate;
 		cfg.index = a.device;
 		cfg.gain_tenth_db = a.gain_db < 0 ? -1 : (int)llround(a.gain_db * 10);
-		cfg.agc = a.agc;
 		int saved = quiet_begin();
 		RadioErr rc = radio_open(&src.radio, cfg);
 		quiet_end(saved);
@@ -813,8 +806,7 @@ int main(int argc, char** argv)
 		std::cout << "tetra-sniff: radio " + std::string(drv && *drv ? drv : "?") + " " +
 				 std::to_string(a.device) + " " +
 				 std::to_string((long long)src.center) + " Hz @ " +
-				 std::to_string((long long)src.rate) + " S/s gain " + gain +
-				 " agc " + (a.agc ? "on" : "off") + "\n";
+				 std::to_string((long long)src.rate) + " S/s gain " + gain + "\n";
 	}
 
 	sigaction(SIGINT, &sa, nullptr);

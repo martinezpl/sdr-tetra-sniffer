@@ -7,7 +7,6 @@ struct SweepArgs {
 	double step;               // channel raster of the power scan
 	double tune_offset;        // correction for the frequency error of the dongle
 	double gain_db;            // below zero means the automatic gain of the tuner
-	bool agc;
 	int device;
 	double scan;               // seconds of power measurement for each group
 	double dwell;              // seconds of decode on the candidates

@@ -9,7 +9,6 @@ struct RadioOpen {
 	uint32_t rate_hz = 0;
 	int index = 0;
 	int gain_tenth_db = -1;
-	bool agc = false;
 };
 
 enum class RadioErr {

@@ -190,7 +190,6 @@ int sweep_main(const SweepArgs& a)
 	cfg.rate_hz = (uint32_t)a.rate;
 	cfg.index = a.device;
 	cfg.gain_tenth_db = a.gain_db < 0 ? -1 : (int)llround(a.gain_db * 10);
-	cfg.agc = a.agc;
 	Radio* radio = nullptr;
 	RadioErr rc = radio_open(&radio, cfg);
 	if (rc != RadioErr::ok) {

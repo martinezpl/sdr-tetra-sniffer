@@ -308,16 +308,6 @@ static RadioErr soapy_open(Radio* r, const RadioOpen& cfg)
 		unmake(r);
 		return RadioErr::bad_gain;
 	}
-	if (r->driver == "rtlsdr") {
-		try {
-			for (const auto& info : r->dev->getSettingInfo()) {
-				if (info.key != "digital_agc") continue;
-				r->dev->writeSetting("digital_agc", cfg.agc ? "true" : "false");
-				break;
-			}
-		} catch (...) {
-		}
-	}
 	discard(r);
 	return RadioErr::ok;
 }
