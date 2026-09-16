@@ -32,11 +32,9 @@
 ### SDR receiver 
 The sniffer was developed against an RTL-SDR Blog V4 with an R828D tuner.
 It opens the receiver through SoapySDR, so any device with a Soapy module
-works. Install SoapySDR first, then the module for your receiver.
-A live run auto-detects a known USB stick when Soapy finds no module.
-No stick prints `no SDR found`. A known stick without its module prints
-`<name> found, install <module>`. USRP is not auto-detected. Without
-`soapysdr-module-uhd` it stays `no SDR found`.
+works. You'll need the module for your receiver, auto-detect will discover the connected
+device and tell you what to install.
+USRP is not auto-detected. Without `soapysdr-module-uhd` it stays `no SDR found`.
 
 For a receiver with no module, the IQ feed can be piped in instead:
 
@@ -67,11 +65,11 @@ its four cores, at 92 MB for the whole tree.
 ### Packages
 
 ```
-sudo apt install build-essential cmake git curl unzip libvolk-dev libsoapysdr-dev soapysdr-module-rtlsdr  # Debian, Raspberry Pi OS
-brew install cmake volk soapysdr soapyrtlsdr                                                              # macOS
+sudo apt install build-essential cmake git curl unzip libvolk-dev libsoapysdr-dev  # Debian, Raspberry Pi OS
+brew install cmake volk soapysdr                                                              # macOS
 ```
 
-Soapy modules, one per receiver. Debian first, then Homebrew.
+Soapy modules:
 
 | Receiver | Debian | Homebrew |
 | --- | --- | --- |
@@ -83,9 +81,6 @@ Soapy modules, one per receiver. Debian first, then Homebrew.
 | USRP | `soapysdr-module-uhd` | not in brew-core |
 | Pluto | `soapysdr-module-plutosdr` | not in brew-core |
 | SDRplay | `soapysdr-module-sdrplay` | not in brew-core |
-
-`librtlsdr` is a dependency of the RTL-SDR Soapy module. The sniffer links
-SoapySDR, not `librtlsdr`.
 
 CMake 3.16 or later is needed. `curl`, `unzip` and `patch` must be on the
 `PATH` for the codec step of the build. That step on macOS also needs
@@ -295,19 +290,10 @@ and it never touches the recorder. Python 3 alone, no dependencies.
 
 The program sends `READY=1` and `WATCHDOG=1` to `$NOTIFY_SOCKET`, so
 `Type=notify` and `WatchdogSec` work in a systemd unit with no wrapper.
-`ExecStart` needs the `run` subcommand and an absolute `--out`, because the
-default output directory is relative to the working directory:
-
-```
-ExecStart=/opt/sdr-tetra-sniffer/tetra-sniff run \
-    --carriers 419162500,419562500 \
-    --out /var/lib/sdr-tetra-sniffer/recordings
-```
 
 Give `TasksMax` room for the whole tree: `--max-gssi` talkgroup writers, 256
 by default, plus one process for each carrier, plus the parent and the stitch
-process. A `fork()` above `TasksMax`
-throws in the stitch process, which ends the run and logs
+process. A `fork()` above `TasksMax` throws in the stitch process, which ends the run and logs
 `tetra-sniff: stitch exited 134`.
 
 ## Architecture
