@@ -92,8 +92,12 @@ static bool ioreg_int(const char* line, const char* key, uint32_t* out)
 	p++;
 	while (*p == ' ') p++;
 	if (*p == '<') {
+		const char* hex = p + 1;
+		const char* end = hex;
+		while (*end && *end != '>') end++;
+		if (end - hex != 8) return false;
 		unsigned b0 = 0, b1 = 0;
-		if (sscanf(p + 1, "%2x%2x", &b0, &b1) != 2) return false;
+		if (sscanf(hex, "%2x%2x", &b0, &b1) != 2) return false;
 		*out = b0 | (b1 << 8);
 		return *out <= 0xffff;
 	}
@@ -111,6 +115,7 @@ static void scan_ioreg(const char* cmd, std::vector<UsbId>& out)
 	char line[1024];
 	int vid = -1, pid = -1;
 	while (fgets(line, sizeof line, pipe)) {
+		if (strstr(line, "+-o ")) vid = pid = -1;
 		uint32_t v = 0;
 		if (ioreg_int(line, "idVendor", &v) || ioreg_int(line, "vendor-id", &v))
 			vid = (int)v;
@@ -169,7 +174,7 @@ static std::vector<UsbId> list_os_usb()
 	closedir(dir);
 #elif defined(__APPLE__)
 	scan_ioreg("ioreg -p IOUSB -l", out);
-	if (out.empty()) scan_ioreg("ioreg -l -c IOUSBHostDevice", out);
+	if (out.empty()) scan_ioreg("ioreg -r -c IOUSBHostDevice -l", out);
 	if (out.empty()) scan_profiler(out);
 #endif
 	return out;
@@ -237,7 +242,7 @@ static RadioErr soapy_open(Radio* r, const RadioOpen& cfg)
 	try {
 		devs = SoapySDR::Device::enumerate();
 	} catch (...) {
-		return RadioErr::not_found;
+		devs.clear();
 	}
 	if (devs.empty()) {
 		if (cfg.index != 0) return RadioErr::bad_index;
