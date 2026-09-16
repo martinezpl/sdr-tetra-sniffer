@@ -236,14 +236,18 @@ static void discard(Radio* r)
 	} catch (...) {}
 }
 
+static SoapySDR::KwargsList soapy_enumerate()
+{
+	try {
+		return SoapySDR::Device::enumerate();
+	} catch (...) {
+		return {};
+	}
+}
+
 static RadioErr soapy_open(Radio* r, const RadioOpen& cfg)
 {
-	SoapySDR::KwargsList devs;
-	try {
-		devs = SoapySDR::Device::enumerate();
-	} catch (...) {
-		devs.clear();
-	}
+	SoapySDR::KwargsList devs = soapy_enumerate();
 	if (devs.empty()) {
 		if (cfg.index != 0) return RadioErr::bad_index;
 		auto ids = list_usb();
