@@ -194,6 +194,8 @@ int sweep_main(const SweepArgs& a)
 		cfg.max_rate_hz = (uint32_t)llround(span + 2 * SWEEP_EDGE_HZ);
 	}
 	cfg.index = a.device;
+	cfg.channel = a.rx;
+	cfg.antenna = a.antenna;
 	cfg.gain_tenth_db = a.gain_db < 0 ? -1 : (int)llround(a.gain_db * 10);
 	Radio* radio = nullptr;
 	RadioErr rc = radio_open(&radio, cfg);
@@ -224,8 +226,10 @@ int sweep_main(const SweepArgs& a)
 			centers.push_back(c);
 	}
 
-	printf("tetra-sniff: sweep %.3f-%.3f MHz, %.1f kHz raster, %.1f MS/s, %zu span(s)\n",
-	       a.band_lo / 1e6, a.band_hi / 1e6, a.step / 1e3, rate / 1e6, centers.size());
+	const char* ant = radio_antenna(radio);
+	printf("tetra-sniff: sweep %.3f-%.3f MHz, %.1f kHz raster, %.1f MS/s, %zu span(s), rx %d%s%s\n",
+	       a.band_lo / 1e6, a.band_hi / 1e6, a.step / 1e3, rate / 1e6, centers.size(),
+	       a.rx, (ant && *ant) ? " " : "", (ant && *ant) ? ant : "");
 
 	int block = iq_block(rate);
 	auto* in = dsp::buffer::alloc<dsp::complex_t>(block);
@@ -547,6 +551,8 @@ int sweep_main(const SweepArgs& a)
 		// were grouped into spans that wide. A run at any other rate has a
 		// different span, so the group it is handed may no longer fit.
 		printf("      --rate %.0f \\\n", rate);
+		if (a.rx) printf("      --rx %d \\\n", a.rx);
+		if (a.antenna && *a.antenna) printf("      --antenna %s \\\n", a.antenna);
 		if (!ppm.empty()) printf("      --tune-offset %ld \\\n", offset_at(center));
 		printf("      --carriers ");
 		for (size_t j = 0; j < g.hz.size(); j++) printf("%s%u", j ? "," : "", g.hz[j]);

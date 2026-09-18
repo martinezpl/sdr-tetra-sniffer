@@ -36,6 +36,8 @@ struct Radio {
 	std::atomic<uint64_t> overflows{0};
 	std::atomic<bool> stopped{false};
 	std::string driver;
+	std::string antenna;
+	int channel = 0;
 	std::vector<float> iq;
 	std::mutex mu;
 	std::condition_variable cv;
@@ -281,8 +283,8 @@ static uint32_t soapy_best_rate(SoapySDR::Device* dev, size_t channel, uint32_t 
 static bool soapy_apply_rate(Radio* r, uint32_t rate)
 {
 	try {
-		r->dev->setSampleRate(SOAPY_SDR_RX, 0, rate);
-		double got = r->dev->getSampleRate(SOAPY_SDR_RX, 0);
+		r->dev->setSampleRate(SOAPY_SDR_RX, r->channel, rate);
+		double got = r->dev->getSampleRate(SOAPY_SDR_RX, r->channel);
 		r->rate_hz = got > 0 ? (uint32_t)got : rate;
 		return r->rate_hz > 0;
 	} catch (...) {
@@ -303,7 +305,7 @@ static bool soapy_choose_rate(Radio* r, uint32_t wanted, uint32_t cap)
 		return soapy_apply_rate(r, rate) && (!cap || r->rate_hz <= cap);
 	};
 	if (cap && ok(cap)) return true;
-	uint32_t best = soapy_best_rate(r->dev, 0, cap);
+	uint32_t best = soapy_best_rate(r->dev, (size_t)r->channel, cap);
 	if (best && ok(best)) return true;
 	uint32_t start = best ? best : cap;
 	for (uint32_t u = start / 2; u >= 100000; u /= 2)
@@ -315,7 +317,8 @@ static bool soapy_start_stream(Radio* r)
 {
 	close_stream(r);
 	try {
-		r->stream = r->dev->setupStream(SOAPY_SDR_RX, SOAPY_SDR_CF32);
+		r->stream = r->dev->setupStream(SOAPY_SDR_RX, SOAPY_SDR_CF32,
+						{(size_t)r->channel});
 		if (!r->stream || r->dev->activateStream(r->stream) != 0) {
 			close_stream(r);
 			return false;
@@ -350,6 +353,34 @@ static RadioErr soapy_open(Radio* r, const RadioOpen& cfg)
 	} catch (...) {
 		r->driver.clear();
 	}
+	r->channel = cfg.channel;
+	try {
+		size_t n = r->dev->getNumChannels(SOAPY_SDR_RX);
+		if (cfg.channel < 0 || (size_t)cfg.channel >= n) {
+			unmake(r);
+			return RadioErr::bad_channel;
+		}
+	} catch (...) {
+		if (cfg.channel != 0) {
+			unmake(r);
+			return RadioErr::bad_channel;
+		}
+	}
+	if (cfg.antenna && *cfg.antenna) {
+		try {
+			bool ok = false;
+			for (const auto& name : r->dev->listAntennas(SOAPY_SDR_RX, r->channel))
+				if (name == cfg.antenna) { ok = true; break; }
+			if (!ok) {
+				unmake(r);
+				return RadioErr::bad_antenna;
+			}
+			r->dev->setAntenna(SOAPY_SDR_RX, r->channel, cfg.antenna);
+		} catch (...) {
+			unmake(r);
+			return RadioErr::bad_antenna;
+		}
+	}
 	// Soapy drivers require a sample rate before activateStream. Rate 0
 	// means the widest rate this receiver lists, at or below max_rate_hz.
 	if (!soapy_choose_rate(r, cfg.rate_hz, cfg.max_rate_hz)) {
@@ -357,7 +388,7 @@ static RadioErr soapy_open(Radio* r, const RadioOpen& cfg)
 		return RadioErr::bad_rate;
 	}
 	try {
-		r->dev->setFrequency(SOAPY_SDR_RX, 0, cfg.center_hz);
+		r->dev->setFrequency(SOAPY_SDR_RX, r->channel, cfg.center_hz);
 		r->center_hz = cfg.center_hz;
 	} catch (...) {
 		unmake(r);
@@ -365,17 +396,17 @@ static RadioErr soapy_open(Radio* r, const RadioOpen& cfg)
 	}
 	try {
 		if (cfg.gain_tenth_db < 0) {
-			if (r->dev->hasGainMode(SOAPY_SDR_RX, 0)) {
-				r->dev->setGainMode(SOAPY_SDR_RX, 0, true);
+			if (r->dev->hasGainMode(SOAPY_SDR_RX, r->channel)) {
+				r->dev->setGainMode(SOAPY_SDR_RX, r->channel, true);
 				r->gain_tenth_db = -1;
 			} else {
-				r->gain_tenth_db = (int)llround(r->dev->getGain(SOAPY_SDR_RX, 0) * 10);
+				r->gain_tenth_db = (int)llround(r->dev->getGain(SOAPY_SDR_RX, r->channel) * 10);
 			}
 		} else {
-			if (r->dev->hasGainMode(SOAPY_SDR_RX, 0))
-				r->dev->setGainMode(SOAPY_SDR_RX, 0, false);
-			r->dev->setGain(SOAPY_SDR_RX, 0, cfg.gain_tenth_db / 10.0);
-			r->gain_tenth_db = (int)llround(r->dev->getGain(SOAPY_SDR_RX, 0) * 10);
+			if (r->dev->hasGainMode(SOAPY_SDR_RX, r->channel))
+				r->dev->setGainMode(SOAPY_SDR_RX, r->channel, false);
+			r->dev->setGain(SOAPY_SDR_RX, r->channel, cfg.gain_tenth_db / 10.0);
+			r->gain_tenth_db = (int)llround(r->dev->getGain(SOAPY_SDR_RX, r->channel) * 10);
 		}
 	} catch (...) {
 		unmake(r);
@@ -394,6 +425,11 @@ static RadioErr soapy_open(Radio* r, const RadioOpen& cfg)
 	if (!started) {
 		unmake(r);
 		return RadioErr::busy;
+	}
+	try {
+		r->antenna = r->dev->getAntenna(SOAPY_SDR_RX, r->channel);
+	} catch (...) {
+		r->antenna.clear();
 	}
 	discard(r);
 	return RadioErr::ok;
@@ -419,6 +455,8 @@ RadioErr radio_open(Radio** radio, const RadioOpen& cfg)
 		if (!cfg.rate_hz && cfg.max_rate_hz && cfg.max_rate_hz < r->rate_hz)
 			r->rate_hz = cfg.max_rate_hz;
 		r->gain_tenth_db = cfg.gain_tenth_db < 0 ? -1 : cfg.gain_tenth_db;
+		r->channel = cfg.channel;
+		if (cfg.antenna) r->antenna = cfg.antenna;
 		g_fake_radio = r;
 		*radio = r;
 		return RadioErr::ok;
@@ -457,7 +495,7 @@ RadioErr radio_set_center(Radio* radio, uint32_t center_hz)
 	if (!radio) return RadioErr::refused;
 	if (!radio->fake) {
 		try {
-			radio->dev->setFrequency(SOAPY_SDR_RX, 0, center_hz);
+			radio->dev->setFrequency(SOAPY_SDR_RX, radio->channel, center_hz);
 		} catch (...) {
 			return RadioErr::bad_tune;
 		}
@@ -472,8 +510,8 @@ RadioErr radio_set_rate(Radio* radio, uint32_t rate_hz)
 	if (!radio) return RadioErr::refused;
 	if (!radio->fake) {
 		try {
-			radio->dev->setSampleRate(SOAPY_SDR_RX, 0, rate_hz);
-			double got = radio->dev->getSampleRate(SOAPY_SDR_RX, 0);
+			radio->dev->setSampleRate(SOAPY_SDR_RX, radio->channel, rate_hz);
+			double got = radio->dev->getSampleRate(SOAPY_SDR_RX, radio->channel);
 			radio->rate_hz = got > 0 ? (uint32_t)got : rate_hz;
 		} catch (...) {
 			return RadioErr::bad_rate;
@@ -490,7 +528,7 @@ uint32_t radio_max_rate(Radio* radio, uint32_t wanted)
 	if (!radio) return 0;
 	if (radio->fake)
 		return wanted && kFakeNativeRate > wanted ? wanted : kFakeNativeRate;
-	return soapy_best_rate(radio->dev, 0, wanted);
+	return soapy_best_rate(radio->dev, (size_t)radio->channel, wanted);
 }
 
 uint32_t radio_rate(const Radio* radio)
@@ -501,6 +539,11 @@ uint32_t radio_rate(const Radio* radio)
 const char* radio_driver(const Radio* radio)
 {
 	return radio ? radio->driver.c_str() : "";
+}
+
+const char* radio_antenna(const Radio* radio)
+{
+	return radio ? radio->antenna.c_str() : "";
 }
 
 int radio_gain_tenth_db(const Radio* radio)
@@ -560,6 +603,8 @@ const char* radio_error(RadioErr err)
 		return "the receiver did not open (quit SDR++ if it holds the dongle)";
 	case RadioErr::refused: return "the receiver refused the request";
 	case RadioErr::bad_index: return "there is no receiver at that device index";
+	case RadioErr::bad_channel: return "there is no RX channel at that index";
+	case RadioErr::bad_antenna: return "the receiver has no such antenna";
 	case RadioErr::bad_rate: return "the receiver did not take the sample rate";
 	case RadioErr::bad_tune: return "the receiver did not tune";
 	case RadioErr::bad_gain: return "the receiver did not take the tuner gain";

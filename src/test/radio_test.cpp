@@ -45,6 +45,10 @@ int main()
 		      "bad_rate is not tune");
 		check(std::strstr(radio_error(RadioErr::bad_tune), "tune") != nullptr,
 		      "bad_tune names tune");
+		check(std::strstr(radio_error(RadioErr::bad_channel), "RX channel") != nullptr,
+		      "bad_channel names channel");
+		check(std::strstr(radio_error(RadioErr::bad_antenna), "antenna") != nullptr,
+		      "bad_antenna names antenna");
 		pass("radio_error distinguishes rate from tune");
 	}
 
@@ -53,6 +57,7 @@ int main()
 		Radio* r = nullptr;
 		RadioOpen cfg{};
 		check(radio_open(&r, cfg) == RadioErr::ok && r, "open fake");
+		check(radio_antenna(r) && radio_antenna(r)[0] == 0, "fake antenna empty");
 		radio_close(r);
 		pass("radio_open fake");
 	}

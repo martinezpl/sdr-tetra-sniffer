@@ -118,6 +118,9 @@ static const char* USAGE =
 	"                     If Soapy finds none, USB is scanned for a known stick.\n"
 	"                     No stick prints \"no SDR found\". A known stick without\n"
 	"                     its Soapy module prints \"<name> found, install <module>\".\n"
+	"  --rx CHANNEL       RX channel of the receiver. Default 0.\n"
+	"  --antenna NAME     RX antenna of the receiver (LNAL, LNAH, LNAW, ...).\n"
+	"                     Default: the driver default.\n"
 	"\n"
 	"output options:\n"
 	"  --out DIR          Parent directory for the run directories. Default\n"
@@ -191,7 +194,7 @@ static const char* USAGE =
 	"  --max-carriers N   How many candidates the decode stage takes, strongest\n"
 	"                     first. Default 15.\n"
 	"\n"
-	"\"sweep\" also takes --rate, --gain, --device and --tune-offset, with the\n"
+	"\"sweep\" also takes --rate, --gain, --device, --rx, --antenna and --tune-offset, with the\n"
 	"same defaults as \"run\".\n"
 	"\n"
 	"Close SDR++ before a run if it holds the receiver.\n";
@@ -206,6 +209,8 @@ struct Args {
 	std::string start_utc;
 	std::vector<uint32_t> hz;
 	int device = 0;
+	int rx = 0;
+	const char* antenna = nullptr;
 	// Below zero means the automatic gain of the tuner.
 	double gain_db = -1;
 	bool per_carrier = false;
@@ -291,7 +296,7 @@ static SweepArgs parse_sweep_args(int argc, char** argv)
 	// with no arguments finds a network wherever it sits in it. A rate of 0
 	// means the widest span that still holds that allocation.
 	SweepArgs s = { TETRA_BAND_LO, TETRA_BAND_HI, 0, 12500, DEFAULT_TUNE_OFFSET,
-			-1, 0, 0.2, 15, 6, 15 };
+			-1, 0, 0.2, 15, 6, 15, 0, nullptr };
 	for (int i = 1; i < argc; i++) {
 		std::string t = argv[i];
 		auto val = [&]() -> std::string { if (++i >= argc) die(t + " needs a value"); return argv[i]; };
@@ -311,6 +316,11 @@ static SweepArgs parse_sweep_args(int argc, char** argv)
 		else if (t == "--rate") s.rate = parse_double(val(), "--rate");
 		else if (t == "--tune-offset") s.tune_offset = parse_double(val(), "--tune-offset");
 		else if (t == "--device") s.device = (int)parse_ulong(val(), 255, "--device");
+		else if (t == "--rx") s.rx = (int)parse_ulong(val(), 255, "--rx");
+		else if (t == "--antenna") {
+			if (++i >= argc) die(t + " needs a value");
+			s.antenna = argv[i];
+		}
 		else if (t == "--gain") {
 			std::string g = val();
 			s.gain_db = g == "auto" ? -1 : parse_double(g, "--gain");
@@ -347,6 +357,11 @@ static Args parse_args(int argc, char** argv)
 			list_from_flag = true;
 		}
 		else if (s == "--device") a.device = (int)parse_ulong(val(), 255, "--device");
+		else if (s == "--rx") a.rx = (int)parse_ulong(val(), 255, "--rx");
+		else if (s == "--antenna") {
+			if (++i >= argc) die(s + " needs a value");
+			a.antenna = argv[i];
+		}
 		else if (s == "--gain") {
 			std::string g = val();
 			a.gain_db = g == "auto" ? -1 : parse_double(g, "--gain");
@@ -791,22 +806,31 @@ int main(int argc, char** argv)
 		cfg.center_hz = (uint32_t)src.center;
 		cfg.rate_hz = (uint32_t)src.rate;
 		cfg.index = a.device;
+		cfg.channel = a.rx;
+		cfg.antenna = a.antenna;
 		cfg.gain_tenth_db = a.gain_db < 0 ? -1 : (int)llround(a.gain_db * 10);
 		int saved = quiet_begin();
 		RadioErr rc = radio_open(&src.radio, cfg);
 		quiet_end(saved);
 		if (rc == RadioErr::bad_index)
 			die("there is no receiver at --device " + std::to_string(a.device));
+		if (rc == RadioErr::bad_channel)
+			die("there is no RX channel at --rx " + std::to_string(a.rx));
+		if (rc == RadioErr::bad_antenna)
+			die("the receiver has no antenna " + std::string(a.antenna ? a.antenna : ""));
 		if (rc != RadioErr::ok) die(radio_error(rc));
 		src.fmt = Fmt::cf32;
 		int applied = radio_gain_tenth_db(src.radio);
 		char gain[32] = "auto";
 		if (applied >= 0) snprintf(gain, sizeof gain, "%d.%d dB", applied / 10, applied % 10);
 		const char* drv = radio_driver(src.radio);
+		const char* ant = radio_antenna(src.radio);
 		std::cout << "tetra-sniff: radio " + std::string(drv && *drv ? drv : "?") + " " +
 				 std::to_string(a.device) + " " +
 				 std::to_string((long long)src.center) + " Hz @ " +
-				 std::to_string((long long)src.rate) + " S/s gain " + gain + "\n";
+				 std::to_string((long long)src.rate) + " S/s gain " + gain +
+				 " rx " + std::to_string(a.rx) +
+				 (ant && *ant ? std::string(" ") + ant : "") + "\n";
 	}
 
 	sigaction(SIGINT, &sa, nullptr);

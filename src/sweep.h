@@ -20,6 +20,8 @@ struct SweepArgs {
 	double dwell;              // seconds of decode on the candidates
 	double threshold_db;       // how far above the noise floor a peak must stand
 	size_t max_carriers;       // how many candidates the decode stage takes
+	int rx;                    // Soapy RX channel, default 0
+	const char* antenna;       // Soapy RX antenna; null keeps the driver default
 };
 
 int sweep_main(const SweepArgs& a);
