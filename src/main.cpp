@@ -827,7 +827,7 @@ int main(int argc, char** argv)
 	}
 
 	int bytes_per = src.fmt == Fmt::cf32 ? 8 : src.fmt == Fmt::cs16 ? 4 : 2;
-	int block = (int)(src.rate / 10);
+	int block = iq_block(src.rate);
 	std::vector<uint8_t> raw(block * bytes_per);
 	auto* in = dsp::buffer::alloc<dsp::complex_t>(block);
 	std::vector<dsp::complex_t*> tmp(n);

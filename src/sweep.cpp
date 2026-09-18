@@ -229,13 +229,13 @@ int sweep_main(const SweepArgs& a)
 	printf("tetra-sniff: sweep %.3f-%.3f MHz, %.1f kHz raster, %.1f MS/s, %zu span(s)\n",
 	       a.band_lo / 1e6, a.band_hi / 1e6, a.step / 1e3, rate / 1e6, centers.size());
 
-	int block = (int)(rate / 10);
+	int block = iq_block(rate);
 	auto* in = dsp::buffer::alloc<dsp::complex_t>(block);
 	auto* out = dsp::buffer::alloc<dsp::complex_t>(block);
 	auto* syms = dsp::buffer::alloc<dsp::complex_t>(block);
 	auto* dibits = dsp::buffer::alloc<uint8_t>(block);
 	auto* bits = dsp::buffer::alloc<uint8_t>(2 * block);
-	int scan_blocks = std::max(1, (int)llround(a.scan * 10));
+	int scan_blocks = std::max(1, (int)llround(a.scan * rate / block));
 	// A group holds every VFO that one pass of the input feeds. The VFOs are
 	// built once: setOffset moves the rotator, and the filter taps stay.
 	const size_t GROUP = 32;
@@ -364,7 +364,7 @@ int sweep_main(const SweepArgs& a)
 		}
 		quiet_end(saved2);
 		for (size_t k : cand) chans[k].tested = true;
-		int dwell_blocks = std::max(1, (int)llround(a.dwell * 10));
+		int dwell_blocks = std::max(1, (int)llround(a.dwell * rate / block));
 		// One list of estimates for each candidate, keyed by channel.
 		std::map<size_t, std::vector<double>> errors;
 		for (int b2 = 0; b2 < dwell_blocks; b2++) {
