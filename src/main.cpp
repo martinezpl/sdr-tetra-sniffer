@@ -106,10 +106,10 @@ static const char* USAGE =
 	"                     prints the value to use. Default 0.\n"
 	"  --rate HZ          Sample rate of the receiver, and so the width of one\n"
 	"                     span. \"run\" defaults to 3200000. \"sweep\" instead asks\n"
-	"                     the receiver for the widest rate it takes and reports\n"
-	"                     it, so give this only to hold it below that. Watch\n"
-	"                     the dropped column of clock.log if the host cannot\n"
-	"                     keep up.\n"
+	"                     for the widest rate that still holds the TETRA band\n"
+	"                     (or a narrower --band) and reports it. Give this only\n"
+	"                     to hold it below that. Watch the dropped column of\n"
+	"                     clock.log if the host cannot keep up.\n"
 	"  --gain DB          Tuner gain of 0 to 100 dB, or \"auto\". The tuner takes\n"
 	"                     the nearest gain that it supports, and the start line\n"
 	"                     reports the gain that it took. Default auto.\n"
@@ -289,8 +289,8 @@ static SweepArgs parse_sweep_args(int argc, char** argv)
 {
 	// The whole of the spectrum that TETRA is given below 470 MHz, so a sweep
 	// with no arguments finds a network wherever it sits in it. A rate of 0
-	// means "ask the receiver for the widest span it can give".
-	SweepArgs s = { 380000000, 430000000, 0, 12500, DEFAULT_TUNE_OFFSET,
+	// means the widest span that still holds that allocation.
+	SweepArgs s = { TETRA_BAND_LO, TETRA_BAND_HI, 0, 12500, DEFAULT_TUNE_OFFSET,
 			-1, 0, 0.2, 15, 6, 15 };
 	for (int i = 1; i < argc; i++) {
 		std::string t = argv[i];

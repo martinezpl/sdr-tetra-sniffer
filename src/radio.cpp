@@ -211,14 +211,18 @@ void radio_fake_queue(const float* interleaved_iq, size_t n_complex)
 	g_fake_radio->cv.notify_all();
 }
 
+static void close_stream(Radio* r)
+{
+	if (!r || !r->dev || !r->stream) return;
+	try { r->dev->deactivateStream(r->stream); } catch (...) {}
+	try { r->dev->closeStream(r->stream); } catch (...) {}
+	r->stream = nullptr;
+}
+
 static void unmake(Radio* r)
 {
 	if (!r || !r->dev) return;
-	if (r->stream) {
-		try { r->dev->deactivateStream(r->stream); } catch (...) {}
-		try { r->dev->closeStream(r->stream); } catch (...) {}
-		r->stream = nullptr;
-	}
+	close_stream(r);
 	try { SoapySDR::Device::unmake(r->dev); } catch (...) {}
 	r->dev = nullptr;
 }
@@ -246,6 +250,83 @@ static SoapySDR::KwargsList soapy_enumerate()
 	}
 }
 
+// Widest RX rate the device lists, optionally capped at wanted. Used when the
+// caller passes rate 0, which means "the widest span this receiver takes".
+static uint32_t soapy_best_rate(SoapySDR::Device* dev, size_t channel, uint32_t wanted)
+{
+	if (!dev) return 0;
+	uint32_t best = 0;
+	auto take = [&](double hz) {
+		if (hz <= 0 || hz > 4294967295.0) return;
+		uint32_t u = (uint32_t)hz;
+		if (wanted && u > wanted) return;
+		if (u > best) best = u;
+	};
+	try {
+		auto listed = dev->listSampleRates(SOAPY_SDR_RX, channel);
+		if (!listed.empty()) {
+			for (double hz : listed) take(hz);
+			return best;
+		}
+		for (const auto& range : dev->getSampleRateRange(SOAPY_SDR_RX, channel)) {
+			double hi = range.maximum();
+			if (wanted && hi > wanted) hi = wanted;
+			if (hi >= range.minimum()) take(hi);
+		}
+	} catch (...) {
+	}
+	return best;
+}
+
+static bool soapy_apply_rate(Radio* r, uint32_t rate)
+{
+	try {
+		r->dev->setSampleRate(SOAPY_SDR_RX, 0, rate);
+		double got = r->dev->getSampleRate(SOAPY_SDR_RX, 0);
+		r->rate_hz = got > 0 ? (uint32_t)got : rate;
+		return r->rate_hz > 0;
+	} catch (...) {
+		r->rate_hz = 0;
+		return false;
+	}
+}
+
+// Rate 0: take the widest listed rate at or below cap (cap 0 = no cap).
+// Try the cap itself first, so a continuous-range device can hit the span
+// exactly. If a setting is refused or snaps above the cap, try successively
+// halved rates so a stick that advertises more than it can stream still opens.
+// An explicit rate is tried once.
+static bool soapy_choose_rate(Radio* r, uint32_t wanted, uint32_t cap)
+{
+	if (wanted) return soapy_apply_rate(r, wanted);
+	auto ok = [&](uint32_t rate) {
+		return soapy_apply_rate(r, rate) && (!cap || r->rate_hz <= cap);
+	};
+	if (cap && ok(cap)) return true;
+	uint32_t best = soapy_best_rate(r->dev, 0, cap);
+	if (best && ok(best)) return true;
+	uint32_t start = best ? best : cap;
+	for (uint32_t u = start / 2; u >= 100000; u /= 2)
+		if (ok(u)) return true;
+	return false;
+}
+
+static bool soapy_start_stream(Radio* r)
+{
+	close_stream(r);
+	try {
+		r->stream = r->dev->setupStream(SOAPY_SDR_RX, SOAPY_SDR_CF32);
+		if (!r->stream || r->dev->activateStream(r->stream) != 0) {
+			close_stream(r);
+			return false;
+		}
+		return true;
+	} catch (...) {
+		close_stream(r);
+		return false;
+	}
+}
+
 static RadioErr soapy_open(Radio* r, const RadioOpen& cfg)
 {
 	SoapySDR::KwargsList devs = soapy_enumerate();
@@ -269,25 +350,11 @@ static RadioErr soapy_open(Radio* r, const RadioOpen& cfg)
 	} catch (...) {
 		r->driver.clear();
 	}
-	try {
-		r->stream = r->dev->setupStream(SOAPY_SDR_RX, SOAPY_SDR_CF32);
-		if (!r->stream || r->dev->activateStream(r->stream) != 0) {
-			unmake(r);
-			return RadioErr::busy;
-		}
-	} catch (...) {
+	// Soapy drivers require a sample rate before activateStream. Rate 0
+	// means the widest rate this receiver lists, at or below max_rate_hz.
+	if (!soapy_choose_rate(r, cfg.rate_hz, cfg.max_rate_hz)) {
 		unmake(r);
-		return RadioErr::busy;
-	}
-	if (cfg.rate_hz) {
-		try {
-			r->dev->setSampleRate(SOAPY_SDR_RX, 0, cfg.rate_hz);
-			double got = r->dev->getSampleRate(SOAPY_SDR_RX, 0);
-			r->rate_hz = got > 0 ? (uint32_t)got : cfg.rate_hz;
-		} catch (...) {
-			unmake(r);
-			return RadioErr::bad_rate;
-		}
+		return RadioErr::bad_rate;
 	}
 	try {
 		r->dev->setFrequency(SOAPY_SDR_RX, 0, cfg.center_hz);
@@ -298,16 +365,35 @@ static RadioErr soapy_open(Radio* r, const RadioOpen& cfg)
 	}
 	try {
 		if (cfg.gain_tenth_db < 0) {
-			r->dev->setGainMode(SOAPY_SDR_RX, 0, true);
-			r->gain_tenth_db = -1;
+			if (r->dev->hasGainMode(SOAPY_SDR_RX, 0)) {
+				r->dev->setGainMode(SOAPY_SDR_RX, 0, true);
+				r->gain_tenth_db = -1;
+			} else {
+				r->gain_tenth_db = (int)llround(r->dev->getGain(SOAPY_SDR_RX, 0) * 10);
+			}
 		} else {
-			r->dev->setGainMode(SOAPY_SDR_RX, 0, false);
+			if (r->dev->hasGainMode(SOAPY_SDR_RX, 0))
+				r->dev->setGainMode(SOAPY_SDR_RX, 0, false);
 			r->dev->setGain(SOAPY_SDR_RX, 0, cfg.gain_tenth_db / 10.0);
 			r->gain_tenth_db = (int)llround(r->dev->getGain(SOAPY_SDR_RX, 0) * 10);
 		}
 	} catch (...) {
 		unmake(r);
 		return RadioErr::bad_gain;
+	}
+	bool started = soapy_start_stream(r);
+	if (!started && !cfg.rate_hz) {
+		for (uint32_t u = r->rate_hz / 2; u >= 100000; u /= 2) {
+			if (!soapy_apply_rate(r, u)) continue;
+			if (soapy_start_stream(r)) {
+				started = true;
+				break;
+			}
+		}
+	}
+	if (!started) {
+		unmake(r);
+		return RadioErr::busy;
 	}
 	discard(r);
 	return RadioErr::ok;
@@ -329,7 +415,9 @@ RadioErr radio_open(Radio** radio, const RadioOpen& cfg)
 		r->fake = true;
 		r->driver = "fake";
 		r->center_hz = cfg.center_hz;
-		r->rate_hz = cfg.rate_hz;
+		r->rate_hz = cfg.rate_hz ? cfg.rate_hz : kFakeNativeRate;
+		if (!cfg.rate_hz && cfg.max_rate_hz && cfg.max_rate_hz < r->rate_hz)
+			r->rate_hz = cfg.max_rate_hz;
 		r->gain_tenth_db = cfg.gain_tenth_db < 0 ? -1 : cfg.gain_tenth_db;
 		g_fake_radio = r;
 		*radio = r;
@@ -402,27 +490,7 @@ uint32_t radio_max_rate(Radio* radio, uint32_t wanted)
 	if (!radio) return 0;
 	if (radio->fake)
 		return wanted && kFakeNativeRate > wanted ? wanted : kFakeNativeRate;
-	uint32_t best = 0;
-	auto take = [&](double hz) {
-		if (hz <= 0) return;
-		uint32_t u = (uint32_t)hz;
-		if (wanted && u > wanted) return;
-		if (u > best) best = u;
-	};
-	try {
-		auto listed = radio->dev->listSampleRates(SOAPY_SDR_RX, 0);
-		if (!listed.empty()) {
-			for (double r : listed) take(r);
-			return best;
-		}
-		for (const auto& range : radio->dev->getSampleRateRange(SOAPY_SDR_RX, 0)) {
-			double hi = range.maximum();
-			if (wanted && hi > wanted) hi = wanted;
-			if (hi >= range.minimum()) take(hi);
-		}
-	} catch (...) {
-	}
-	return best;
+	return soapy_best_rate(radio->dev, 0, wanted);
 }
 
 uint32_t radio_rate(const Radio* radio)

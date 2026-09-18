@@ -64,6 +64,11 @@ int main()
 		cfg.rate_hz = 0;
 		check(radio_open(&r, cfg) == RadioErr::ok && r, "open rate 0");
 		check(radio_max_rate(r, 0) > 0, "max rate positive");
+		check(radio_rate(r) == radio_max_rate(r, 0), "rate 0 is the widest rate");
+		radio_close(r);
+		cfg.max_rate_hz = 3200000;
+		check(radio_open(&r, cfg) == RadioErr::ok && r, "open rate 0 with cap");
+		check(radio_rate(r) == 3200000, "cap holds the auto rate");
 		radio_close(r);
 		pass("radio_open rate 0");
 	}

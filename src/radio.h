@@ -7,6 +7,7 @@ struct Radio;
 struct RadioOpen {
 	uint32_t center_hz = 0;
 	uint32_t rate_hz = 0;
+	uint32_t max_rate_hz = 0;  // when rate_hz is 0, do not exceed this
 	int index = 0;
 	int gain_tenth_db = -1;
 };

@@ -1,6 +1,14 @@
 #pragma once
 #include <cstddef>
 
+// The TETRA allocation below 470 MHz. A sweep with no --band searches all of
+// it. A sweep with no --rate will not open a span wider than this, because
+// nothing in that allocation sits outside it.
+static const double TETRA_BAND_LO = 380000000;
+static const double TETRA_BAND_HI = 430000000;
+static const double TETRA_SPAN_HZ = TETRA_BAND_HI - TETRA_BAND_LO;
+static const double SWEEP_EDGE_HZ = 15000;
+
 struct SweepArgs {
 	double band_lo, band_hi;   // the band to search, in Hz
 	double rate;               // dongle sample rate, and so the width of one span

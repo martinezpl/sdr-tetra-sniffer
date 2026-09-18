@@ -86,8 +86,8 @@ int read_live(Radio* r, dsp::complex_t* in, int n)
 	}
 }
 
-// main.cpp keeps a carrier 15 kHz clear of the edge, so the scan does too.
-double usable_half(double rate) { return rate / 2 - 15e3; }
+// A carrier is kept SWEEP_EDGE_HZ clear of the edge, so the scan does too.
+double usable_half(double rate) { return rate / 2 - SWEEP_EDGE_HZ; }
 
 // The dongle rolls off well before the edge of its span. Past this point a
 // carrier still decodes, but it loses SNR, so a suggested centre avoids it.
@@ -188,6 +188,11 @@ int sweep_main(const SweepArgs& a)
 	RadioOpen cfg{};
 	cfg.center_hz = (uint32_t)((a.band_lo + a.band_hi) / 2);
 	cfg.rate_hz = (uint32_t)a.rate;
+	if (!a.rate) {
+		double span = a.band_hi - a.band_lo;
+		if (span > TETRA_SPAN_HZ) span = TETRA_SPAN_HZ;
+		cfg.max_rate_hz = (uint32_t)llround(span + 2 * SWEEP_EDGE_HZ);
+	}
 	cfg.index = a.device;
 	cfg.gain_tenth_db = a.gain_db < 0 ? -1 : (int)llround(a.gain_db * 10);
 	Radio* radio = nullptr;
@@ -197,25 +202,18 @@ int sweep_main(const SweepArgs& a)
 		return 2;
 	}
 
-	// Without --rate, ask the receiver for the widest span it will give, rather
-	// than assume a limit. A wider span is fewer retunes and fewer runs.
-	double rate = a.rate;
+	// Rate 0 asked for the widest span that still fits the TETRA allocation
+	// (or a narrower --band). The IQ block size, not the rate, is what has
+	// to stay inside the SDR++ work buffers.
+	double rate = radio_rate(radio);
 	if (!rate) {
-		uint32_t got = radio_max_rate(radio, 0);
-		if (!got) {
-			fprintf(stderr, "tetra-sniff: %s\n", radio_error(RadioErr::bad_rate));
-			radio_close(radio);
-			return 2;
-		}
-		if (radio_set_rate(radio, got) != RadioErr::ok) {
-			fprintf(stderr, "tetra-sniff: %s\n", radio_error(RadioErr::bad_rate));
-			radio_close(radio);
-			return 2;
-		}
-		rate = radio_rate(radio) ? radio_rate(radio) : got;
+		fprintf(stderr, "tetra-sniff: %s\n", radio_error(RadioErr::bad_rate));
+		radio_close(radio);
+		return 2;
+	}
+	if (!a.rate)
 		printf("tetra-sniff: the receiver takes %.3f MS/s, so a span is %.3f MHz\n",
 		       rate / 1e6, (2 * usable_half(rate)) / 1e6);
-	}
 
 	double half = usable_half(rate);
 	std::vector<double> centers;
