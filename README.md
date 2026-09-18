@@ -77,7 +77,7 @@ Soapy modules:
 | HackRF | `soapysdr-module-hackrf` | `soapyhackrf` |
 | Airspy | `soapysdr-module-airspy` | `soapyairspy` (Pothos tap if brew-core does not have it) |
 | bladeRF | `soapysdr-module-bladerf` | not in brew-core |
-| LimeSDR | `soapysdr-module-lms7` | not in brew-core |
+| LimeSDR | `soapysdr-module-lms7` | `limesuite` |
 | USRP | `soapysdr-module-uhd` | not in brew-core |
 | Pluto | `soapysdr-module-plutosdr` | not in brew-core |
 | SDRplay | `soapysdr-module-sdrplay` | not in brew-core |

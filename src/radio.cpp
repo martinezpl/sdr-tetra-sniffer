@@ -57,7 +57,8 @@ static const Known kKnown[] = {
 	{0x1d50, 0x604b, "HackRF", "soapysdr-module-hackrf", "soapyhackrf"},
 	{0x1d50, 0x60a1, "Airspy", "soapysdr-module-airspy", "soapyairspy"},
 	{0x2cf0, 0x5250, "bladeRF", "soapysdr-module-bladerf", nullptr},
-	{0x0403, 0x601f, "LimeSDR", "soapysdr-module-lms7", nullptr},
+	{0x0403, 0x601f, "LimeSDR", "soapysdr-module-lms7", "limesuite"},
+	{0x1d50, 0x6108, "LimeSDR", "soapysdr-module-lms7", "limesuite"},
 	{0x0456, 0xb673, "Pluto", "soapysdr-module-plutosdr", nullptr},
 	{0x1df7, 0x3000, "SDRplay", "soapysdr-module-sdrplay", nullptr},
 };

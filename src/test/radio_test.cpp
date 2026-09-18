@@ -164,6 +164,14 @@ int main()
 		check(a.err == RadioErr::not_recognized && a.name && std::strcmp(a.name, "Airspy") == 0,
 		      "Airspy");
 
+		UsbId lime_mini{0x0403, 0x601f};
+		check(radio_detect(0, &lime_mini, 1).err == RadioErr::not_recognized, "LimeSDR Mini");
+		UsbId lime_usb{0x1d50, 0x6108};
+		RadioDetect lime = radio_detect(0, &lime_usb, 1);
+		check(lime.err == RadioErr::not_recognized && lime.name &&
+			      std::strcmp(lime.name, "LimeSDR") == 0,
+		      "LimeSDR-USB");
+
 		UsbId sdrplay{0x1df7, 0x3000};
 		check(radio_detect(0, &sdrplay, 1).err == RadioErr::not_recognized, "SDRplay");
 
