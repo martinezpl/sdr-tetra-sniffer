@@ -188,10 +188,12 @@ int sweep_main(const SweepArgs& a)
 	RadioOpen cfg{};
 	cfg.center_hz = (uint32_t)((a.band_lo + a.band_hi) / 2);
 	cfg.rate_hz = (uint32_t)a.rate;
+	double width = a.band_hi - a.band_lo;
+	uint32_t one_span_cap = 0;
 	if (!a.rate) {
-		double span = a.band_hi - a.band_lo;
-		if (span > TETRA_SPAN_HZ) span = TETRA_SPAN_HZ;
-		cfg.max_rate_hz = (uint32_t)llround(span + 2 * SWEEP_EDGE_HZ);
+		double span = width > TETRA_SPAN_HZ ? TETRA_SPAN_HZ : width;
+		one_span_cap = (uint32_t)llround((span + 2 * SWEEP_EDGE_HZ) * SWEEP_ONE_SPAN_MARGIN);
+		cfg.max_rate_hz = one_span_cap;
 	}
 	cfg.index = a.device;
 	cfg.channel = a.rx;
@@ -204,14 +206,26 @@ int sweep_main(const SweepArgs& a)
 		return 2;
 	}
 
-	// Rate 0 asked for the widest span that still fits the TETRA allocation
-	// (or a narrower --band). The IQ block size, not the rate, is what has
-	// to stay inside the SDR++ work buffers.
+	// Rate 0 asked for a window that holds the TETRA allocation (or a
+	// narrower --band) in one span. The IQ block size, not the rate, is
+	// what has to stay inside the SDR++ work buffers.
 	double rate = radio_rate(radio);
 	if (!rate) {
 		fprintf(stderr, "tetra-sniff: %s\n", radio_error(RadioErr::bad_rate));
 		radio_close(radio);
 		return 2;
+	}
+	// The IQ window is `rate` hertz wide. If that covers the search band,
+	// one tune is enough. usable_half is tighter (15 kHz off each edge);
+	// a stick that snapped to exactly the band width would otherwise
+	// miss by 30 kHz and the 95% overlap loop would add a second span.
+	if (!a.rate && width > rate && one_span_cap) {
+		uint32_t wider = radio_max_rate(radio, one_span_cap);
+		if (wider > rate && width <= wider &&
+		    radio_set_rate(radio, wider) == RadioErr::ok) {
+			double got = radio_rate(radio);
+			rate = got ? got : wider;
+		}
 	}
 	if (!a.rate)
 		printf("tetra-sniff: the receiver takes %.3f MS/s, so a span is %.3f MHz\n",
@@ -219,7 +233,7 @@ int sweep_main(const SweepArgs& a)
 
 	double half = usable_half(rate);
 	std::vector<double> centers;
-	if (a.band_hi - a.band_lo <= 2 * half) {
+	if (width <= rate) {
 		centers.push_back((a.band_lo + a.band_hi) / 2);
 	} else {
 		for (double c = a.band_lo + half; c - half < a.band_hi; c += 2 * half * 0.95)
