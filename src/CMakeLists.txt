@@ -78,6 +78,26 @@ if (NOT SoapySDR_FOUND AND NOT SOAPYSDR_FOUND)
     endif ()
 endif ()
 
+# Factories come from plugins on disk, not from linking SoapySDR. ./build.sh
+# installs the ones this OS ships. A configure with none still builds: --iq
+# does not need a stick.
+find_program(SOAPYSDRUTIL_EXECUTABLE NAMES SoapySDRUtil)
+if (SOAPYSDRUTIL_EXECUTABLE)
+    execute_process(COMMAND ${SOAPYSDRUTIL_EXECUTABLE} --info
+        OUTPUT_VARIABLE SOAPY_INFO ERROR_QUIET)
+    string(REGEX MATCHALL "Module found:[^\n]+" SOAPY_MOD_LINES "${SOAPY_INFO}")
+    if (SOAPY_MOD_LINES)
+        message(STATUS "SoapySDR plugins:")
+        foreach (line IN LISTS SOAPY_MOD_LINES)
+            message(STATUS "  ${line}")
+        endforeach ()
+    else ()
+        message(WARNING
+            "SoapySDR loaded no device plugins. sweep/run enumerate() will be empty. "
+            "Run ./build.sh (or install a Soapy module) so the receiver is visible.")
+    endif ()
+endif ()
+
 add_executable(tetra-sniff main.cpp child.cpp recorder.cpp allocations.cpp radio.cpp stitch.cpp sweep.cpp ${DEC_SRC})
 target_include_directories(tetra-sniff PRIVATE . ${SRC} ${DEC}/src ${DEC}/codec ${SDRPP_CORE_ROOT}/src ${VOLK_INCLUDE_DIR})
 target_link_libraries(tetra-sniff PRIVATE ${VOLK_LIBRARY})

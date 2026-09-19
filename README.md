@@ -31,10 +31,11 @@
 
 ### SDR receiver 
 The sniffer was developed against an RTL-SDR Blog V4 with an R828D tuner.
-It opens the receiver through SoapySDR, so any device with a Soapy module
-works. You'll need the module for your receiver, auto-detect will discover the connected
-device and tell you what to install.
-USRP is not auto-detected. Without `soapysdr-module-uhd` it stays `no SDR found`.
+It opens the receiver through SoapySDR. `sweep` and `run` call
+`enumerate()`: a stick is visible only after that stick's Soapy plugin is on
+disk. `./build.sh` detects the OS, lists the hardware modules the package
+manager ships, and installs them. A factory the OS does not package is not
+built here. USRP stays `no SDR found` until the host has `soapysdr-module-uhd`.
 
 For a receiver with no module, the IQ feed can be piped in instead:
 
@@ -46,9 +47,13 @@ For a receiver with no module, the IQ feed can be piped in instead:
 Give `--fmt`, `--rate` and `--center` to match what the tool produces.
 
 ### Host 
-Any POSIX system with a C++17 compiler. Windows is not supported,
-because the program is a process tree built on `fork`, pipes, POSIX file
-locks and shared memory.
+Any POSIX system with a C++17 compiler and a package manager `./build.sh`
+can drive. Windows is not supported, because the program is a process tree
+built on `fork`, pipes, POSIX file locks and shared memory.
+
+On Debian that is `apt` (the script uses `sudo`). On macOS it is Homebrew
+and the Xcode command line tools. Those two are the only packages you
+install yourself.
 
 | Platform | State |
 | --- | --- |
@@ -64,27 +69,26 @@ its four cores, at 92 MB for the whole tree.
 
 ### Packages
 
-```
-sudo apt install build-essential cmake git curl unzip libvolk-dev libsoapysdr-dev  # Debian, Raspberry Pi OS
-brew install cmake volk soapysdr                                                              # macOS
-```
+`./build.sh` installs the compiler tools, cmake, volk, SoapySDR, and every
+hardware Soapy module this OS lists (`soapysdr-module-*` on apt, `soapy*`
+plus `limesuite` on Homebrew). It skips the kitchen-sink `-all` package and
+the remote/audio/osmosdr wrappers, which conflict or are not a stick.
 
-Soapy modules:
+`SKIP_DEPS=1 ./build.sh` leaves cmake/volk/SoapySDR as they are.
+`SOAPY_SKIP_MODULES=1 ./build.sh` leaves the device plugins as they are.
+
+What the two reference hosts typically ship:
 
 | Receiver | Debian | Homebrew |
 | --- | --- | --- |
 | RTL-SDR | `soapysdr-module-rtlsdr` | `soapyrtlsdr` |
 | HackRF | `soapysdr-module-hackrf` | `soapyhackrf` |
-| Airspy | `soapysdr-module-airspy` | `soapyairspy` (Pothos tap if brew-core does not have it) |
+| Airspy | `soapysdr-module-airspy` | not in brew-core |
 | bladeRF | `soapysdr-module-bladerf` | not in brew-core |
 | LimeSDR | `soapysdr-module-lms7` | `limesuite` |
 | USRP | `soapysdr-module-uhd` | not in brew-core |
 | Pluto | `soapysdr-module-plutosdr` | not in brew-core |
 | SDRplay | `soapysdr-module-sdrplay` | not in brew-core |
-
-CMake 3.16 or later is needed. `curl`, `unzip` and `patch` must be on the
-`PATH` for the codec step of the build. That step on macOS also needs
-`md5sum`; install `coreutils` if `/sbin/md5sum` is absent.
 
 ### Active TETRA network in range
 `sweep` runs a scan for active control carriers across the TETRA spectrum, and the traffic carriers are then learned from the grants that the
@@ -99,7 +103,8 @@ cd sdr-tetra-sniffer
 ./tetra-sniff help
 ```
 
-`build.sh` checks out the submodules, fetches the speech codec, and builds
+`build.sh` installs the host packages and the Soapy device modules this OS
+ships, checks out the submodules, fetches the speech codec, and builds
 `./tetra-sniff` at the top of the repository.
 
 ### Third party dependencies
