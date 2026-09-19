@@ -12,7 +12,7 @@ DEMOD=sdrpp-tetra-demodulator
 CODEC=$DEMOD/src/decoder/codec/c-code
 # fix_64bit.patch adds this typedef, and the build needs it on a 64-bit host.
 # The file itself comes from the ZIP, so only the typedef shows that the
-# patches ran. download_and_patch.sh exits 0 even when every patch fails.
+# patches ran.
 PATCH_MARK="typedef int16_t Word16"
 
 pkg_have() {
@@ -224,8 +224,8 @@ if ! grep -qs "$PATCH_MARK" $CODEC/source.h; then
 	echo "==> ETSI speech codec"
 	# download_and_patch.sh deletes the codec directory itself before it
 	# unpacks, so a half applied codec of an earlier run cannot survive.
-	(cd $DEMOD/src/decoder/etsi_codec-patches && ./download_and_patch.sh)
-	if ! grep -qs "$PATCH_MARK" $CODEC/source.h; then
+	if ! (cd $DEMOD/src/decoder/etsi_codec-patches && ./download_and_patch.sh) \
+		|| ! grep -qs "$PATCH_MARK" $CODEC/source.h; then
 		echo "the ETSI codec download or patch step failed." >&2
 		echo "It needs curl, unzip and patch on the PATH." >&2
 		exit 1
