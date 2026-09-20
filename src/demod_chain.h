@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include <dsp/buffer/buffer.h>
+#include <dsp/stream.h>
 #include "dsp/pi4dqpsk.h"
 #include "dsp/dqpsk_sym_extr.h"
 #include "dsp/bit_unpacker.h"
@@ -17,6 +18,16 @@
 // The TETRA symbol rate fixes both of these. They are not options.
 static const double VFO_RATE = 36000;
 static const double VFO_BW = 30000;
+
+// One IQ block is 100 ms, unless that many samples would overflow the SDR++
+// resampler/FIR work buffer. Then more, shorter, blocks cover the same time.
+// The receiver's rate is not capped: a wide-span stick still gives its span.
+static inline int iq_block(double rate)
+{
+	int n = (int)(rate / 10);
+	if (n > STREAM_BUFFER_SIZE) n = STREAM_BUFFER_SIZE;
+	return n > 0 ? n : 1;
+}
 
 // The resampler of SDR++ and the driver of the dongle both print to stdout
 // when they start. The log of a run is for the operator, so that chatter goes

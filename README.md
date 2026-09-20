@@ -30,10 +30,14 @@
 ## Prerequisites
 
 ### SDR receiver 
-The sniffer was developed against an RTL-SDR Blog V4 with an R828D tuner. 
-It links `librtlsdr`, so that is the only device it tunes on its own.
+The sniffer was developed against an RTL-SDR Blog V4 with an R828D tuner.
+It opens the receiver through SoapySDR. `sweep` and `run` call
+`enumerate()`: a stick is visible only after that stick's Soapy plugin is on
+disk. `./build.sh` detects the OS, lists the hardware modules the package
+manager ships, and installs them. A factory the OS does not package is not
+built here. USRP stays `no SDR found` until the host has `soapysdr-module-uhd`.
 
-For any other SDR receiver, the IQ feed can be piped in instead:
+For a receiver with no module, the IQ feed can be piped in instead:
 
 ```
 <your sdr tool writing IQ to stdout> \
@@ -43,9 +47,13 @@ For any other SDR receiver, the IQ feed can be piped in instead:
 Give `--fmt`, `--rate` and `--center` to match what the tool produces.
 
 ### Host 
-Any POSIX system with a C++17 compiler. Windows is not supported,
-because the program is a process tree built on `fork`, pipes, POSIX file
-locks and shared memory.
+Any POSIX system with a C++17 compiler and a package manager `./build.sh`
+can drive. Windows is not supported, because the program is a process tree
+built on `fork`, pipes, POSIX file locks and shared memory.
+
+On Debian that is `apt` (the script uses `sudo`). On macOS it is Homebrew
+and the Xcode command line tools. Those two are the only packages you
+install yourself.
 
 | Platform | State |
 | --- | --- |
@@ -61,14 +69,26 @@ its four cores, at 92 MB for the whole tree.
 
 ### Packages
 
-```
-sudo apt install build-essential cmake git curl unzip libvolk-dev librtlsdr-dev  # Debian, Raspberry Pi OS
-brew install cmake volk librtlsdr                                               # macOS
-```
+`./build.sh` installs the compiler tools, cmake, volk, SoapySDR, and every
+hardware Soapy module this OS lists (`soapysdr-module-*` on apt, `soapy*`
+plus `limesuite` on Homebrew). It skips the kitchen-sink `-all` package and
+the remote/audio/osmosdr wrappers, which conflict or are not a stick.
 
-CMake 3.16 or later is needed. `curl`, `unzip` and `patch` must be on the
-`PATH` for the codec step of the build. That step on macOS also needs
-`md5sum`; install `coreutils` if `/sbin/md5sum` is absent.
+`SKIP_DEPS=1 ./build.sh` leaves cmake/volk/SoapySDR as they are.
+`SOAPY_SKIP_MODULES=1 ./build.sh` leaves the device plugins as they are.
+
+What the two reference hosts typically ship:
+
+| Receiver | Debian | Homebrew |
+| --- | --- | --- |
+| RTL-SDR | `soapysdr-module-rtlsdr` | `soapyrtlsdr` |
+| HackRF | `soapysdr-module-hackrf` | `soapyhackrf` |
+| Airspy | `soapysdr-module-airspy` | not in brew-core |
+| bladeRF | `soapysdr-module-bladerf` | not in brew-core |
+| LimeSDR | `soapysdr-module-lms7` | `limesuite` |
+| USRP | `soapysdr-module-uhd` | not in brew-core |
+| Pluto | `soapysdr-module-plutosdr` | not in brew-core |
+| SDRplay | `soapysdr-module-sdrplay` | not in brew-core |
 
 ### Active TETRA network in range
 `sweep` runs a scan for active control carriers across the TETRA spectrum, and the traffic carriers are then learned from the grants that the
@@ -83,7 +103,8 @@ cd sdr-tetra-sniffer
 ./tetra-sniff help
 ```
 
-`build.sh` checks out the submodules, fetches the speech codec, and builds
+`build.sh` installs the host packages and the Soapy device modules this OS
+ships, checks out the submodules, fetches the speech codec, and builds
 `./tetra-sniff` at the top of the repository.
 
 ### Third party dependencies
@@ -106,7 +127,9 @@ cd sdr-tetra-sniffer
 ```
 
 `run` exposes every setting as a flag. Ctrl-C, SIGTERM, or the end of the
-input stops a run and closes the files cleanly. Logs go to stdout.
+input stops a run and closes the files cleanly. Logs go to stdout. A live
+run prints `radio rtlsdr 0`, or the Soapy driver key of the device that
+opened.
 
 ```
 nohup ./tetra-sniff run --carriers 419162500,419562500 \
@@ -272,19 +295,10 @@ and it never touches the recorder. Python 3 alone, no dependencies.
 
 The program sends `READY=1` and `WATCHDOG=1` to `$NOTIFY_SOCKET`, so
 `Type=notify` and `WatchdogSec` work in a systemd unit with no wrapper.
-`ExecStart` needs the `run` subcommand and an absolute `--out`, because the
-default output directory is relative to the working directory:
-
-```
-ExecStart=/opt/sdr-tetra-sniffer/tetra-sniff run \
-    --carriers 419162500,419562500 \
-    --out /var/lib/sdr-tetra-sniffer/recordings
-```
 
 Give `TasksMax` room for the whole tree: `--max-gssi` talkgroup writers, 256
 by default, plus one process for each carrier, plus the parent and the stitch
-process. A `fork()` above `TasksMax`
-throws in the stitch process, which ends the run and logs
+process. A `fork()` above `TasksMax` throws in the stitch process, which ends the run and logs
 `tetra-sniff: stitch exited 134`.
 
 ## Architecture
@@ -402,8 +416,6 @@ src/test/run.sh BASEBAND.wav HZ1 HZ2  # checks against a real capture
 See [CONTRIBUTING.md](CONTRIBUTING.md) for how to ensure no regressions.
 
 ## To be optimized
-
-**Native support for other SDR receivers**
 
 **The parent is the only serial stage.** It is the one process that touches
 the full-rate stream, and its channelizer loop runs on one thread. Each
