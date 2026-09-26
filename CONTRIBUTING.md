@@ -31,8 +31,8 @@ The ETSI codec is not in git, so do not check out an old commit in place.
 Copy the working tree and roll back only the source:
 
 ```
-cp -a . ../tetra-sniffer-base
-cd ../tetra-sniffer-base
+cp -a . ../tetra-analyzer-base
+cd ../tetra-analyzer-base
 git checkout <commit-before-your-change> -- src/
 rm -rf src/build tetra-sniff
 ./build.sh

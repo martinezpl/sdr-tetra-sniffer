@@ -1,4 +1,4 @@
-# sdr-tetra-sniffer
+# sdr-tetra-analyzer
 
 - [Prerequisites](#prerequisites)
   - [SDR receiver](#sdr-receiver)
@@ -30,7 +30,7 @@
 ## Prerequisites
 
 ### SDR receiver 
-The sniffer was developed against an RTL-SDR Blog V4 with an R828D tuner.
+The analyzer was developed against an RTL-SDR Blog V4 with an R828D tuner.
 It opens the receiver through SoapySDR. `sweep` and `run` call
 `enumerate()`: a stick is visible only after that stick's Soapy plugin is on
 disk. `./build.sh` detects the OS, lists the hardware modules the package
@@ -97,8 +97,8 @@ control carriers broadcast. See "Find your carriers" below.
 ## Installation
 
 ```
-git clone --recurse-submodules git@github.com:martinezpl/sdr-tetra-sniffer.git
-cd sdr-tetra-sniffer
+git clone --recurse-submodules git@github.com:martinezpl/sdr-tetra-analyzer.git
+cd sdr-tetra-analyzer
 ./build.sh
 ./tetra-sniff help
 ```
