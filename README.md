@@ -41,7 +41,7 @@ For a receiver with no module, the IQ feed can be piped in instead:
 
 ```
 <your sdr tool writing IQ to stdout> \
-  | ./tetra-sniff run --iq - --carriers ...
+  | ./tetra-analyze run --iq - --carriers ...
 ```
 
 Give `--fmt`, `--rate` and `--center` to match what the tool produces.
@@ -100,12 +100,12 @@ control carriers broadcast. See "Find your carriers" below.
 git clone --recurse-submodules git@github.com:martinezpl/sdr-tetra-analyzer.git
 cd sdr-tetra-analyzer
 ./build.sh
-./tetra-sniff help
+./tetra-analyze help
 ```
 
 `build.sh` installs the host packages and the Soapy device modules this OS
 ships, checks out the submodules, fetches the speech codec, and builds
-`./tetra-sniff` at the top of the repository.
+`./tetra-analyze` at the top of the repository.
 
 ### Third party dependencies
 
@@ -121,9 +121,9 @@ ships, checks out the submodules, fetches the speech codec, and builds
 ## Usage
 
 ```
-./tetra-sniff help    # every option, with its default
-./tetra-sniff sweep   # find the control channels and active carriers
-./tetra-sniff run --carriers <control carriers>   # record
+./tetra-analyze help    # every option, with its default
+./tetra-analyze sweep   # find the control channels and active carriers
+./tetra-analyze run --carriers <control carriers>   # record
 ```
 
 `run` exposes every setting as a flag. Ctrl-C, SIGTERM, or the end of the
@@ -132,8 +132,8 @@ run prints `radio rtlsdr 0`, or the Soapy driver key of the device that
 opened.
 
 ```
-nohup ./tetra-sniff run --carriers 419162500,419562500 \
-  > tetra-sniff.log 2>&1 < /dev/null &
+nohup ./tetra-analyze run --carriers 419162500,419562500 \
+  > tetra-analyze.log 2>&1 < /dev/null &
 ```
 
 ### Finding carriers
@@ -142,19 +142,19 @@ nohup ./tetra-sniff run --carriers 419162500,419562500 \
 each peak. It prints a ready `run` command line:
 
 ```
-$ ./tetra-sniff sweep
+$ ./tetra-analyze sweep
 Found Rafael Micro R828D tuner
 RTL-SDR Blog V4 Detected
-tetra-sniff: the receiver takes 3.200 MS/s, so a span is 3.170 MHz
-tetra-sniff: sweep 380.000-430.000 MHz, 12.5 kHz raster, 3.2 MS/s, 17 span(s)
-tetra-sniff: span 1 at 381.585 MHz, 254 channels
-tetra-sniff: span 2 at 384.596 MHz, 241 channels
+tetra-analyze: the receiver takes 3.200 MS/s, so a span is 3.170 MHz
+tetra-analyze: sweep 380.000-430.000 MHz, 12.5 kHz raster, 3.2 MS/s, 17 span(s)
+tetra-analyze: span 1 at 381.585 MHz, 254 channels
+tetra-analyze: span 2 at 384.596 MHz, 241 channels
 [...]
-tetra-sniff: 41 peak(s) at or above 6.0 dB over the noise floor
-tetra-sniff: 7 span(s) to decode
-tetra-sniff: span 1 of 7, decode 2 candidate(s) at 385.280 MHz for 8 s
+tetra-analyze: 41 peak(s) at or above 6.0 dB over the noise floor
+tetra-analyze: 7 span(s) to decode
+tetra-analyze: span 1 of 7, decode 2 candidate(s) at 385.280 MHz for 8 s
 [...]
-tetra-sniff: span 7 of 7, decode 3 candidate(s) at 427.240 MHz for 8 s
+tetra-analyze: span 7 of 7, decode 3 candidate(s) at 427.240 MHz for 8 s
 
   channel       SNR dB  role                     cell main carrier  error Hz
   385002500        7.0  no lock, not TETRA          -                  -
@@ -178,14 +178,14 @@ at once needs one receiver for each, named with --device.
 
   # span 1 of 2, 9 carrier(s), 4 control
 
-  ./tetra-sniff run --center [...] \
+  ./tetra-analyze run --center [...] \
       --tune-offset -166 \
       --rate 3200000 \
       --carriers [...]
 
   # span 2 of 2, 9 carrier(s), 3 control
 
-  ./tetra-sniff run --center [...] \
+  ./tetra-analyze run --center [...] \
       --tune-offset -180 \
       --rate 3200000 \
       --carriers [...]
@@ -225,7 +225,7 @@ use again, and a retune costs the head of a call.
 So a sweep only has to find the control carriers. The rest fills itself:
 
 ```
-tetra-sniff: slot 5 takes 420362500 Hz, granted to GSSI 1002 by 419562500 Hz
+tetra-analyze: slot 5 takes 420362500 Hz, granted to GSSI 1002 by 419562500 Hz
 ```
 
 The learned carriers go to `DIR/carriers` beside the recordings, and the next
@@ -278,7 +278,7 @@ it follows, and every call it could not take.
 
 ```
 $ python3 src/ui.py --in recordings --port 8080
-tetra-sniff ui: reading recordings, reachable on every network
+tetra-analyze ui: reading recordings, reachable on every network
   http://10.42.0.1:8080
   http://192.168.1.201:8080
   http://127.0.0.1:8080
@@ -299,7 +299,7 @@ The program sends `READY=1` and `WATCHDOG=1` to `$NOTIFY_SOCKET`, so
 Give `TasksMax` room for the whole tree: `--max-gssi` talkgroup writers, 256
 by default, plus one process for each carrier, plus the parent and the stitch
 process. A `fork()` above `TasksMax` throws in the stitch process, which ends the run and logs
-`tetra-sniff: stitch exited 134`.
+`tetra-analyze: stitch exited 134`.
 
 ## Architecture
 

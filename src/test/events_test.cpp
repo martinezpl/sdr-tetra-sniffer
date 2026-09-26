@@ -77,7 +77,7 @@ int main()
 		check_wav(wavp, 2400);
 	}
 	std::vector<std::string> want = {
-		"# tetra-sniff hz=419962500 start_utc=2026-09-04T11:05:00Z iq_rate=2400000 wav=419962500.wav",
+		"# tetra-analyze hz=419962500 start_utc=2026-09-04T11:05:00Z iq_rate=2400000 wav=419962500.wav",
 		"# offset_s ISSI GSSI event hz TN usage_marker encr dl_usage chanalloc_hz chanalloc_tn iq_s",
 		"0.000 - - SYSINFO 419962500 1 - - - - - 0.412",
 		"0.000 - 1001 PLAY 419962500 1 7 0 7 - - 3.985",

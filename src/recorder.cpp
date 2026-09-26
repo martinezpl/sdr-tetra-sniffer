@@ -81,7 +81,7 @@ Recorder::Recorder(uint32_t hz, const std::string& dir, const std::string& start
 	wav.open(base + ".wav");
 	log = fopen((base + ".log").c_str(), "w");
 	if (!log) throw std::runtime_error(base + ".log: " + strerror(errno));
-	fprintf(log, "# tetra-sniff hz=%u start_utc=%s iq_rate=%.0f wav=%u.wav\n", hz, start_utc_iso.c_str(), iq_rate, hz);
+	fprintf(log, "# tetra-analyze hz=%u start_utc=%s iq_rate=%.0f wav=%u.wav\n", hz, start_utc_iso.c_str(), iq_rate, hz);
 	fprintf(log, "# offset_s ISSI GSSI event hz TN usage_marker encr dl_usage chanalloc_hz chanalloc_tn iq_s\n");
 	fflush(log);
 }

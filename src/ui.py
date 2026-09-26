@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A read-only web overview of a tetra-sniff run.
+"""A read-only web overview of a tetra-analyze run.
 
 It parses the files that a run writes and serves one page. It never writes to
 the run directory and it never talks to the recorder, so it can be started,
@@ -391,7 +391,7 @@ def local_addresses():
 
 class Handler(BaseHTTPRequestHandler):
     recordings = "recordings"
-    server_version = "tetra-sniff-ui"
+    server_version = "tetra-analyze-ui"
 
     # A browser abandons a request whenever it seeks in the audio, pauses it,
     # or leaves the page, and the next write to that socket fails. That is
@@ -469,7 +469,7 @@ class Handler(BaseHTTPRequestHandler):
                 left -= len(chunk)
 
 
-PAGE = r"""<!doctype html><meta charset="utf-8"><title>tetra-sniff</title>
+PAGE = r"""<!doctype html><meta charset="utf-8"><title>tetra-analyze</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>&#128225;</text></svg>">
 <style>
 :root{--bg:#12151a;--fg:#e6e9ef;--dim:#8b93a3;--line:#242a34;--ok:#4ea564;
@@ -553,7 +553,7 @@ details[open] summary .caret{rotate:90deg}
 summary .count{color:var(--dim);font-variant-numeric:tabular-nums}
 .panel{padding:0 12px 10px;max-height:340px;overflow:auto}
 </style>
-<h1>tetra-sniff</h1>
+<h1>tetra-analyze</h1>
 <div class="sub" id="sub">loading&hellip;</div>
 <div class="strip" id="strip"></div>
 
@@ -850,7 +850,7 @@ def main():
     srv.daemon_threads = True
     everywhere = a.bind in ("", "0.0.0.0")
     print(
-        "tetra-sniff ui: reading %s%s"
+        "tetra-analyze ui: reading %s%s"
         % (a.recordings, ", reachable on every network" if everywhere else ""),
         flush=True,
     )

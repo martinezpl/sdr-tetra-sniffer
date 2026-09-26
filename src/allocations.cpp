@@ -48,7 +48,7 @@ Allocations Allocations::create(const std::vector<uint32_t>& carriers, size_t sl
 	if (carriers.empty())
 		throw std::runtime_error("allocations need at least one carrier");
 	if (slots < carriers.size()) slots = carriers.size();
-	char path[] = "/tmp/tetra-sniff-allocations.XXXXXX";
+	char path[] = "/tmp/tetra-analyze-allocations.XXXXXX";
 	int fd = mkstemp(path);
 	if (fd < 0)
 		throw std::runtime_error(std::string("mkstemp: ") + strerror(errno));

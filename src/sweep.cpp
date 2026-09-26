@@ -170,7 +170,7 @@ double choose_center(const std::vector<uint32_t>& hz, const std::vector<double>&
 int sweep_main(const SweepArgs& a)
 {
 	if (a.band_hi <= a.band_lo) {
-		fprintf(stderr, "tetra-sniff: --band needs LOW:HIGH with HIGH above LOW\n");
+		fprintf(stderr, "tetra-analyze: --band needs LOW:HIGH with HIGH above LOW\n");
 		return 2;
 	}
 
@@ -179,7 +179,7 @@ int sweep_main(const SweepArgs& a)
 	for (double hz = std::ceil(a.band_lo / a.step) * a.step; hz <= a.band_hi; hz += a.step)
 		chans.push_back(Channel{ (uint32_t)llround(hz) });
 	if (chans.empty()) {
-		fprintf(stderr, "tetra-sniff: the band holds no channel at a step of %.0f Hz\n", a.step);
+		fprintf(stderr, "tetra-analyze: the band holds no channel at a step of %.0f Hz\n", a.step);
 		return 2;
 	}
 
@@ -202,7 +202,7 @@ int sweep_main(const SweepArgs& a)
 	Radio* radio = nullptr;
 	RadioErr rc = radio_open(&radio, cfg);
 	if (rc != RadioErr::ok) {
-		fprintf(stderr, "tetra-sniff: %s\n", radio_error(rc));
+		fprintf(stderr, "tetra-analyze: %s\n", radio_error(rc));
 		return 2;
 	}
 
@@ -211,7 +211,7 @@ int sweep_main(const SweepArgs& a)
 	// what has to stay inside the SDR++ work buffers.
 	double rate = radio_rate(radio);
 	if (!rate) {
-		fprintf(stderr, "tetra-sniff: %s\n", radio_error(RadioErr::bad_rate));
+		fprintf(stderr, "tetra-analyze: %s\n", radio_error(RadioErr::bad_rate));
 		radio_close(radio);
 		return 2;
 	}
@@ -228,7 +228,7 @@ int sweep_main(const SweepArgs& a)
 		}
 	}
 	if (!a.rate)
-		printf("tetra-sniff: the receiver takes %.3f MS/s, so a span is %.3f MHz\n",
+		printf("tetra-analyze: the receiver takes %.3f MS/s, so a span is %.3f MHz\n",
 		       rate / 1e6, (2 * usable_half(rate)) / 1e6);
 
 	double half = usable_half(rate);
@@ -241,7 +241,7 @@ int sweep_main(const SweepArgs& a)
 	}
 
 	const char* ant = radio_antenna(radio);
-	printf("tetra-sniff: sweep %.3f-%.3f MHz, %.1f kHz raster, %.1f MS/s, %zu span(s), rx %d%s%s\n",
+	printf("tetra-analyze: sweep %.3f-%.3f MHz, %.1f kHz raster, %.1f MS/s, %zu span(s), rx %d%s%s\n",
 	       a.band_lo / 1e6, a.band_hi / 1e6, a.step / 1e3, rate / 1e6, centers.size(),
 	       a.rx, (ant && *ant) ? " " : "", (ant && *ant) ? ant : "");
 
@@ -264,7 +264,7 @@ int sweep_main(const SweepArgs& a)
 	// Stage 1: measure the power of every channel.
 	for (size_t s = 0; s < centers.size() && !status; s++) {
 		if (radio_set_center(radio, (uint32_t)centers[s]) != RadioErr::ok) {
-			fprintf(stderr, "tetra-sniff: %s\n", radio_error(RadioErr::bad_tune));
+			fprintf(stderr, "tetra-analyze: %s\n", radio_error(RadioErr::bad_tune));
 			status = 2;
 			break;
 		}
@@ -273,7 +273,7 @@ int sweep_main(const SweepArgs& a)
 			if (chans[i].span < 0 &&
 			    std::fabs((double)chans[i].hz + a.tune_offset - centers[s]) <= half)
 				idx.push_back(i);
-		printf("tetra-sniff: span %zu at %.3f MHz, %zu channels\n", s + 1, centers[s] / 1e6,
+		printf("tetra-analyze: span %zu at %.3f MHz, %zu channels\n", s + 1, centers[s] / 1e6,
 		       idx.size());
 		for (size_t g = 0; g < idx.size() && !status; g += GROUP) {
 			size_t n = std::min(GROUP, idx.size() - g);
@@ -283,7 +283,7 @@ int sweep_main(const SweepArgs& a)
 			for (int b = 0; b < scan_blocks; b++) {
 				int cnt = read_live(radio, in, block);
 				if (cnt < 0) {
-					fprintf(stderr, "tetra-sniff: the receiver stopped\n");
+					fprintf(stderr, "tetra-analyze: the receiver stopped\n");
 					status = 2;
 					break;
 				}
@@ -328,7 +328,7 @@ int sweep_main(const SweepArgs& a)
 		}
 		if (best) peaks.push_back(i);
 	}
-	printf("tetra-sniff: %zu peak(s) at or above %.1f dB over the noise floor\n", peaks.size(),
+	printf("tetra-analyze: %zu peak(s) at or above %.1f dB over the noise floor\n", peaks.size(),
 	       a.threshold_db);
 
 	// Group the peaks into spans to decode in. A band wider than one span needs
@@ -348,7 +348,7 @@ int sweep_main(const SweepArgs& a)
 		}
 		groups.push_back({ k });
 	}
-	printf("tetra-sniff: %zu span(s) to decode\n", groups.size());
+	printf("tetra-analyze: %zu span(s) to decode\n", groups.size());
 
 	// Stage 2: decode the candidates of each group in turn.
 	for (size_t g = 0; g < groups.size() && !status; g++) {
@@ -359,14 +359,14 @@ int sweep_main(const SweepArgs& a)
 		std::sort(cand.begin(), cand.end(),
 			  [&](size_t x, size_t y) { return chans[x].snr > chans[y].snr; });
 		if (cand.size() > a.max_carriers) {
-			printf("tetra-sniff: --max-carriers is %zu, so %zu weaker peak(s) of this"
+			printf("tetra-analyze: --max-carriers is %zu, so %zu weaker peak(s) of this"
 			       " span go undecoded\n", a.max_carriers, cand.size() - a.max_carriers);
 			cand.resize(a.max_carriers);
 		}
-		printf("tetra-sniff: span %zu of %zu, decode %zu candidate(s) at %.3f MHz for %.0f s\n",
+		printf("tetra-analyze: span %zu of %zu, decode %zu candidate(s) at %.3f MHz for %.0f s\n",
 		       g + 1, groups.size(), cand.size(), decode_center / 1e6, a.dwell);
 		if (radio_set_center(radio, (uint32_t)decode_center) != RadioErr::ok) {
-			fprintf(stderr, "tetra-sniff: %s\n", radio_error(RadioErr::bad_tune));
+			fprintf(stderr, "tetra-analyze: %s\n", radio_error(RadioErr::bad_tune));
 			status = 2;
 			break;
 		}
@@ -386,7 +386,7 @@ int sweep_main(const SweepArgs& a)
 		for (int b2 = 0; b2 < dwell_blocks; b2++) {
 			int cnt = read_live(radio, in, block);
 			if (cnt < 0) {
-				fprintf(stderr, "tetra-sniff: the receiver stopped\n");
+				fprintf(stderr, "tetra-analyze: the receiver stopped\n");
 				status = 2;
 				break;
 			}
@@ -560,7 +560,7 @@ int sweep_main(const SweepArgs& a)
 		if (runs.size() > 1)
 			printf("\n  # span %zu of %zu, %zu carrier(s), %zu control\n", i + 1,
 			       runs.size(), g.hz.size(), g.controls);
-		printf("\n  ./tetra-sniff run --center %.0f \\\n", center);
+		printf("\n  ./tetra-analyze run --center %.0f \\\n", center);
 		// The rate is what the receiver was measured to take, and the carriers
 		// were grouped into spans that wide. A run at any other rate has a
 		// different span, so the group it is handed may no longer fit.

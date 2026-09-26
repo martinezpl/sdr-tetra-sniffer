@@ -226,7 +226,7 @@ int stitch_main(int fd, const std::string& dir, size_t max_gssi)
 			// ponytail: one line for the whole run, a line per GSSI needs a second set
 			if (workers.size() >= max_gssi) {
 				if (!cap_logged)
-					std::cout << "tetra-sniff: " << max_gssi
+					std::cout << "tetra-analyze: " << max_gssi
 						  << " GSSI workers is the limit. GSSI "
 						  << frame.gssi << " gets no worker.\n";
 				cap_logged = true;
@@ -246,13 +246,13 @@ int stitch_main(int fd, const std::string& dir, size_t max_gssi)
 			it = workers.emplace(frame.gssi, Worker{ pid, pipe_fd[1] }).first;
 			// One line for each talkgroup. The log then shows real activity,
 			// not only faults, and names every WAV file that the run makes.
-			std::cout << "tetra-sniff: talkgroup " + std::to_string(frame.gssi) +
+			std::cout << "tetra-analyze: talkgroup " + std::to_string(frame.gssi) +
 					 " first heard on " + std::to_string(frame.hz) + " Hz, writing calls/" +
 					 std::to_string(frame.gssi) + ".wav\n";
 		}
 		if (!write_frame(it->second.fd, frame)) {
 			// A dead call worker points to a full disk. The run stops.
-			std::cout << "tetra-sniff: GSSI " << frame.gssi << " worker died: " << strerror(errno) << "\n";
+			std::cout << "tetra-analyze: GSSI " << frame.gssi << " worker died: " << strerror(errno) << "\n";
 			worst = 5;
 			break;
 		}

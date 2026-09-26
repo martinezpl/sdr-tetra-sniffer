@@ -34,7 +34,7 @@ Copy the working tree and roll back only the source:
 cp -a . ../tetra-analyzer-base
 cd ../tetra-analyzer-base
 git checkout <commit-before-your-change> -- src/
-rm -rf src/build tetra-sniff
+rm -rf src/build tetra-analyze
 ./build.sh
 ```
 
@@ -50,7 +50,7 @@ name, `--max-carriers` equal to the carrier count leaves no free slot, and
 `--no-learn` stops the carrier file from changing what the next run does:
 
 ```
-./tetra-sniff run --iq ~/golden.cu8 --fmt cu8 --rate 3200000 \
+./tetra-analyze run --iq ~/golden.cu8 --fmt cu8 --rate 3200000 \
     --center 420000000 --tune-offset -2500 \
     --start-utc 2026-01-01T00:00:00Z \
     --max-carriers 13 --no-learn \

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build ./tetra-sniff from a fresh clone. Extra arguments go to the CMake
+# Build ./tetra-analyze from a fresh clone. Extra arguments go to the CMake
 # configure step, for example: ./build.sh -DCMAKE_BUILD_TYPE=Debug
 #
 # The script installs the host packages and the Soapy device plugins this
@@ -237,6 +237,6 @@ cmake -S src -B src/build "$@"
 cmake --build src/build -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
 
 echo
-echo "built ./tetra-sniff"
-echo "  ./tetra-sniff help     every option and its default"
-echo "  ./tetra-sniff sweep    find the carriers of your network"
+echo "built ./tetra-analyze"
+echo "  ./tetra-analyze help     every option and its default"
+echo "  ./tetra-analyze sweep    find the carriers of your network"

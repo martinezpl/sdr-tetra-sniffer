@@ -4,10 +4,10 @@
 set -u
 cd "$(dirname "$0")/../.."
 BUILD=src/build
-REC=./tetra-sniff
+REC=./tetra-analyze
 [ -d $BUILD ] || { echo "build first: ./build.sh"; exit 2; }
 cmake --build $BUILD >/dev/null || exit 2
-TMP=$(mktemp -d /tmp/tetra-sniff-test.XXXXXX)
+TMP=$(mktemp -d /tmp/tetra-analyze-test.XXXXXX)
 trap 'rm -rf "$TMP"' EXIT
 fails=0
 ctest --test-dir $BUILD --output-on-failure && echo "PASS unit tests" \

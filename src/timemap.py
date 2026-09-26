@@ -174,7 +174,7 @@ def selftest():
         "252000 9 777 5440 SEP\n"
         "288000 12 777 6880 FILL\n")
     open(os.path.join(d, "clock.log"), "w").write(
-        "# tetra-sniff run=x start_utc=y iq_rate=3200000 vfo_rate=36000\n"
+        "# tetra-analyze run=x start_utc=y iq_rate=3200000 vfo_rate=36000\n"
         "# utc vfo_sample queue dropped event\n"
         "2026-09-11T00:00:01.000Z 36000 0 0 OK\n"
         "2026-09-11T00:00:02.000Z 72000 0 0 OK\n"

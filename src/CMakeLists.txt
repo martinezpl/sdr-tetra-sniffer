@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(tetra_sniff C CXX)
+project(tetra_analyze C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -98,21 +98,21 @@ if (SOAPYSDRUTIL_EXECUTABLE)
     endif ()
 endif ()
 
-add_executable(tetra-sniff main.cpp child.cpp recorder.cpp allocations.cpp radio.cpp stitch.cpp sweep.cpp ${DEC_SRC})
-target_include_directories(tetra-sniff PRIVATE . ${SRC} ${DEC}/src ${DEC}/codec ${SDRPP_CORE_ROOT}/src ${VOLK_INCLUDE_DIR})
-target_link_libraries(tetra-sniff PRIVATE ${VOLK_LIBRARY})
+add_executable(tetra-analyze main.cpp child.cpp recorder.cpp allocations.cpp radio.cpp stitch.cpp sweep.cpp ${DEC_SRC})
+target_include_directories(tetra-analyze PRIVATE . ${SRC} ${DEC}/src ${DEC}/codec ${SDRPP_CORE_ROOT}/src ${VOLK_INCLUDE_DIR})
+target_link_libraries(tetra-analyze PRIVATE ${VOLK_LIBRARY})
 if (SoapySDR_FOUND)
-    target_link_libraries(tetra-sniff PRIVATE SoapySDR)
+    target_link_libraries(tetra-analyze PRIVATE SoapySDR)
 else ()
-    target_include_directories(tetra-sniff PRIVATE ${SOAPYSDR_INCLUDE_DIRS})
-    target_link_libraries(tetra-sniff PRIVATE ${SOAPYSDR_LIBRARIES})
+    target_include_directories(tetra-analyze PRIVATE ${SOAPYSDR_INCLUDE_DIRS})
+    target_link_libraries(tetra-analyze PRIVATE ${SOAPYSDR_LIBRARIES})
 endif ()
 # -fwrapv keeps signed overflow defined. L_add() in tetra_op.c detects overflow with it.
-target_compile_options(tetra-sniff PRIVATE $<$<COMPILE_LANGUAGE:C>:-fwrapv;-O2>)
-# The CLI lands at the top of the repository, so "./tetra-sniff run" works after a
+target_compile_options(tetra-analyze PRIVATE $<$<COMPILE_LANGUAGE:C>:-fwrapv;-O2>)
+# The CLI lands at the top of the repository, so "./tetra-analyze run" works after a
 # build. The $<1:...> wrapper stops a multi-config generator from adding a
 # per-configuration directory below it.
-set_target_properties(tetra-sniff PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<1:${ROOT}>")
+set_target_properties(tetra-analyze PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<1:${ROOT}>")
 
 add_executable(gen_iq test/gen_iq.cpp)
 

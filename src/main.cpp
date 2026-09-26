@@ -46,20 +46,20 @@ static const double DEFAULT_STATUS = 300;
 static const size_t DEFAULT_QUEUE_BLOCKS = 400;
 
 static const char* USAGE =
-	"tetra-sniff - an unattended recorder for clear TETRA speech.\n"
+	"tetra-analyze - an unattended recorder for clear TETRA speech.\n"
 	"\n"
 	"usage:\n"
-	"  tetra-sniff run --carriers HZ,HZ,... [options]\n"
-	"  tetra-sniff run [options] DL_HZ DL_HZ ...\n"
-	"  tetra-sniff sweep [options]\n"
-	"  tetra-sniff help\n"
+	"  tetra-analyze run --carriers HZ,HZ,... [options]\n"
+	"  tetra-analyze run [options] DL_HZ DL_HZ ...\n"
+	"  tetra-analyze sweep [options]\n"
+	"  tetra-analyze help\n"
 	"\n"
 	"\"run\" opens the receiver, follows every carrier in the carrier list and\n"
 	"writes each clear call to its own WAV file. Ctrl-C, SIGTERM or the end of the\n"
 	"input stops the run. Every log line goes to stdout, one line at a time, so a\n"
 	"redirect works in the background:\n"
 	"\n"
-	"  ./tetra-sniff run > tetra-sniff.log 2>&1 &\n"
+	"  ./tetra-analyze run > tetra-analyze.log 2>&1 &\n"
 	"\n"
 	"Each run makes one directory, DIR/<start_utc>/, which holds:\n"
 	"  calls/<GSSI>.wav   the speech of one talkgroup, 8 kHz mono s16, no silence\n"
@@ -235,7 +235,7 @@ struct IqSource {
 
 [[noreturn]] static void die(const std::string& msg)
 {
-	std::cerr << "tetra-sniff: " << msg << "\n";
+	std::cerr << "tetra-analyze: " << msg << "\n";
 	exit(2);
 }
 
@@ -329,7 +329,7 @@ static SweepArgs parse_sweep_args(int argc, char** argv)
 			if (g != "auto" && (s.gain_db < 0 || s.gain_db > 100))
 				die("--gain needs a gain of 0 to 100 dB, or \"auto\"");
 		}
-		else die("unknown option " + t + "\nRun \"tetra-sniff help\" for the options.");
+		else die("unknown option " + t + "\nRun \"tetra-analyze help\" for the options.");
 	}
 	if (s.step <= 0) die("--step needs a step above zero");
 	if (s.scan <= 0 || s.dwell <= 0) die("--scan and --dwell need a time above zero");
@@ -377,7 +377,7 @@ static Args parse_args(int argc, char** argv)
 		else if (s == "--max-carriers") a.max_carriers = parse_count(val(), "--max-carriers");
 		else if (s == "--no-learn") a.learn = false;
 		else if (s.size() > 1 && s[0] == '-' && !isdigit((unsigned char)s[1]))
-			die("unknown option " + s + "\nRun \"tetra-sniff help\" for the options.");
+			die("unknown option " + s + "\nRun \"tetra-analyze help\" for the options.");
 		else {
 			saw_positional = true;
 			a.hz.push_back(parse_hz(s));
@@ -388,7 +388,7 @@ static Args parse_args(int argc, char** argv)
 	if (a.hz.empty())
 		die("give at least one carrier, with --carriers or as DL_HZ arguments.\n"
 		    "The list must hold every control carrier of the network, because every\n"
-		    "grant arrives on one of those. Run \"tetra-sniff sweep\" to find them.");
+		    "grant arrives on one of those. Run \"tetra-analyze sweep\" to find them.");
 	std::vector<uint32_t> u = a.hz;
 	std::sort(u.begin(), u.end());
 	if (std::adjacent_find(u.begin(), u.end()) != u.end()) die("duplicate frequency");
@@ -550,7 +550,7 @@ static void write_learned(const std::string& path, const Allocations& alloc,
 	std::string tmp = path + ".tmp";
 	FILE* f = fopen(tmp.c_str(), "w");
 	if (!f) return;
-	fprintf(f, "# tetra-sniff remembers the carriers that a grant revealed.\n"
+	fprintf(f, "# tetra-analyze remembers the carriers that a grant revealed.\n"
 		   "# Delete this file to forget them. --no-learn stops it being written.\n");
 	// A grant revealed the ones marked "learned". The rest came from the command
 	// line. strtoul stops at the space, so an older reader still parses this.
@@ -666,7 +666,7 @@ static void clock_tick(int fd, uint64_t vfo_samples, size_t queue, uint64_t drop
 	if (status_seconds <= 0 || mono.tv_sec - last_status < (time_t)status_seconds) return;
 	last_status = mono.tv_sec;
 	long up = (long)(mono.tv_sec - first_mono);
-	printf("tetra-sniff: up %ldh%02ldm  queue %zu  dropped %llu (+%llu)  samples %llu\n",
+	printf("tetra-analyze: up %ldh%02ldm  queue %zu  dropped %llu (+%llu)  samples %llu\n",
 	       up / 3600, (up % 3600) / 60, queue, (unsigned long long)dropped,
 	       (unsigned long long)(dropped - status_dropped), (unsigned long long)vfo_samples);
 	status_dropped = dropped;
@@ -699,7 +699,7 @@ int main(int argc, char** argv)
 		return 0;
 	}
 	if (cmd == "sweep") return sweep_main(parse_sweep_args(argc - 1, argv + 1));
-	if (cmd != "run") die("unknown command " + cmd + "\nRun \"tetra-sniff help\" for the commands.");
+	if (cmd != "run") die("unknown command " + cmd + "\nRun \"tetra-analyze help\" for the commands.");
 	Args a = parse_args(argc - 1, argv + 1);
 	status_seconds = a.status;
 	IqSource src = open_iq(a);
@@ -726,10 +726,10 @@ int main(int argc, char** argv)
 			a.hz.push_back(hz);
 		}
 		if (a.hz.size() > before)
-			learned_note = "tetra-sniff: " + std::to_string(a.hz.size() - before) +
+			learned_note = "tetra-analyze: " + std::to_string(a.hz.size() - before) +
 				       " carrier(s) remembered from " + learn_path + "\n";
 		if (unreachable)
-			learned_note += "tetra-sniff: " + std::to_string(unreachable) +
+			learned_note += "tetra-analyze: " + std::to_string(unreachable) +
 					" remembered carrier(s) fall outside this span and were"
 					" dropped\n";
 	}
@@ -738,12 +738,12 @@ int main(int argc, char** argv)
 		// A per-carrier WAV is named for its frequency, so a slot that moves
 		// would have to rotate its files. Keep the list fixed instead.
 		if (pool != a.hz.size())
-			learned_note += "tetra-sniff: --per-carrier keeps the carrier list fixed,"
+			learned_note += "tetra-analyze: --per-carrier keeps the carrier list fixed,"
 					" so there are no free slots\n";
 		pool = a.hz.size();
 	}
 	if (pool < a.hz.size()) {
-		learned_note += "tetra-sniff: --max-carriers " + std::to_string(a.max_carriers) +
+		learned_note += "tetra-analyze: --max-carriers " + std::to_string(a.max_carriers) +
 				" is below the " + std::to_string(a.hz.size()) +
 				" carriers given, so the pool grows to fit them\n";
 		pool = a.hz.size();
@@ -751,18 +751,18 @@ int main(int argc, char** argv)
 	Allocations allocations = Allocations::create(a.hz, pool);
 	const std::string& run_dir = src.run_dir;
 	std::string start_iso = utc(src.start, "%Y-%m-%dT%H:%M:%SZ");
-	std::cout << "tetra-sniff: run dir " << run_dir << " start_utc " << start_iso
+	std::cout << "tetra-analyze: run dir " << run_dir << " start_utc " << start_iso
 		  << " rate " << (long long)src.rate << " center " << (long long)src.center << "\n";
 	// A log read months later must say which carriers the run actually followed.
 	{
-		std::string line = "tetra-sniff: " + std::to_string(a.hz.size()) + " carriers ";
+		std::string line = "tetra-analyze: " + std::to_string(a.hz.size()) + " carriers ";
 		for (size_t i = 0; i < a.hz.size(); i++)
 			line += (i ? "," : "") + std::to_string(a.hz[i]);
 		line += a.per_carrier ? " (per-carrier files on)\n" : "\n";
 		std::cout << line;
 		std::cout << learned_note;
 		if (pool > a.hz.size())
-			std::cout << "tetra-sniff: " + std::to_string(pool - a.hz.size()) +
+			std::cout << "tetra-analyze: " + std::to_string(pool - a.hz.size()) +
 					 " free carrier slot(s) for carriers that a grant names\n";
 	}
 
@@ -827,7 +827,7 @@ int main(int argc, char** argv)
 		if (applied >= 0) snprintf(gain, sizeof gain, "%d.%d dB", applied / 10, applied % 10);
 		const char* drv = radio_driver(src.radio);
 		const char* ant = radio_antenna(src.radio);
-		std::cout << "tetra-sniff: radio " + std::string(drv && *drv ? drv : "?") + " " +
+		std::cout << "tetra-analyze: radio " + std::string(drv && *drv ? drv : "?") + " " +
 				 std::to_string(a.device) + " " +
 				 std::to_string((long long)src.center) + " Hz @ " +
 				 std::to_string((long long)src.rate) + " S/s gain " + gain +
@@ -866,7 +866,7 @@ int main(int argc, char** argv)
 	// dprintf has no fixed buffer, so a long run_dir cannot overflow one.
 	// The centre and the carriers make the run directory describe its own run,
 	// which is what lets a reader place the recordings in the band.
-	dprintf(clock_fd, "# tetra-sniff run=%s start_utc=%s iq_rate=%.0f vfo_rate=%.0f center=%.0f\n"
+	dprintf(clock_fd, "# tetra-analyze run=%s start_utc=%s iq_rate=%.0f vfo_rate=%.0f center=%.0f\n"
 			  "# utc vfo_sample queue dropped event\n",
 		run_dir.c_str(), start_iso.c_str(), src.rate, VFO_RATE, src.center);
 	log_previous_run(clock_fd, a.out, run_dir);
@@ -889,7 +889,7 @@ int main(int argc, char** argv)
 			ssize_t r = read(src.fd, raw.data() + have, raw.size() - have);
 			if (r < 0) {
 				if (errno == EINTR) continue;
-				std::cout << "tetra-sniff: read: " + std::string(strerror(errno)) + "\n";
+				std::cout << "tetra-analyze: read: " + std::string(strerror(errno)) + "\n";
 				break;
 			}
 			if (r == 0) break;
@@ -905,7 +905,7 @@ int main(int argc, char** argv)
 			// Every VFO gets the same input count. Child 0 counts exactly these samples.
 			if (!i) vfo_samples += m;
 			if (write_all(pipes[i], tmp[i], m * sizeof(dsp::complex_t))) continue;
-			std::cout << "tetra-sniff: " + std::to_string(a.hz[i]) + " child stopped reading: " +
+			std::cout << "tetra-analyze: " + std::to_string(a.hz[i]) + " child stopped reading: " +
 					 strerror(errno) + "\n";
 			close(pipes[i]);
 			pipes[i] = -1;
@@ -919,7 +919,7 @@ int main(int argc, char** argv)
 			int slot = allocations.assign(d.hz);
 			if (slot < 0) continue;
 			vfos[slot].setOffset((double)d.hz + a.tune_offset - src.center);
-			std::cout << "tetra-sniff: slot " + std::to_string(slot) + " takes " +
+			std::cout << "tetra-analyze: slot " + std::to_string(slot) + " takes " +
 					 std::to_string(d.hz) + " Hz, granted to GSSI " +
 					 std::to_string(d.ssi) + " by " + std::to_string(d.control_hz) +
 					 " Hz\n";
@@ -939,13 +939,13 @@ int main(int argc, char** argv)
 		int st = 0;
 		while (waitpid(pids[i], &st, 0) < 0 && errno == EINTR) {}
 		int code = WIFEXITED(st) ? WEXITSTATUS(st) : 128 + WTERMSIG(st);
-		if (code) std::cout << "tetra-sniff: " << a.hz[i] << " exited " << code << "\n";
+		if (code) std::cout << "tetra-analyze: " << a.hz[i] << " exited " << code << "\n";
 		worst = std::max(worst, code);
 	}
 	int stitch_status = 0;
 	while (waitpid(stitch_pid, &stitch_status, 0) < 0 && errno == EINTR) {}
 	int stitch_code = WIFEXITED(stitch_status) ? WEXITSTATUS(stitch_status) : 128 + WTERMSIG(stitch_status);
-	if (stitch_code) std::cout << "tetra-sniff: stitch exited " << stitch_code << "\n";
+	if (stitch_code) std::cout << "tetra-analyze: stitch exited " << stitch_code << "\n";
 	worst = std::max(worst, stitch_code);
 	dsp::buffer::free(in);
 	for (auto* p : tmp) dsp::buffer::free(p);
