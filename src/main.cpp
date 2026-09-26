@@ -24,6 +24,7 @@
 #include <dsp/channel/rx_vfo.h>
 #include "allocations.h"
 #include "demod_chain.h"
+#include "pfb.h"
 #include "radio.h"
 #include "sweep.h"
 
@@ -110,6 +111,8 @@ static const char* USAGE =
 	"                     --band) in one span, with a little extra so a stick\n"
 	"                     that snaps or lists a coarse rate still covers, and\n"
 	"                     reports it. Give this only to hold it below that.\n"
+	"                     A rate that the link cannot carry (a Pluto on USB\n"
+	"                     2.0) steps down to one that it can.\n"
 	"                     Watch the dropped column of clock.log if the host\n"
 	"                     cannot keep up.\n"
 	"  --gain DB          Tuner gain of 0 to 100 dB, or \"auto\". The tuner takes\n"
@@ -118,11 +121,16 @@ static const char* USAGE =
 	"  --device INDEX     Index of the receiver. Default 0.\n"
 	"                     A live run auto-detects the receiver through SoapySDR.\n"
 	"                     If Soapy finds none, USB is scanned for a known stick.\n"
-	"                     No stick prints \"no SDR found\". A known stick without\n"
-	"                     its Soapy module prints \"<name> found, install <module>\".\n"
+	"                     No stick prints \"no SDR found\". A known stick that\n"
+	"                     Soapy does not list prints \"<name> found\", and what to\n"
+	"                     install or check.\n"
 	"  --rx CHANNEL       RX channel of the receiver. Default 0.\n"
 	"  --antenna NAME     RX antenna of the receiver (LNAL, LNAH, LNAW, ...).\n"
-	"                     Default: the driver default.\n"
+	"                     Default: the driver default, but LNAW for a Lime.\n"
+	"                     A LimeSDR-USB with its antenna on RX1_L needs LNAL.\n"
+	"  --device-args ARGS Soapy device arguments, KEY=VALUE,... The driver reads\n"
+	"                     them. A USRP at a wide rate needs num_recv_frames=1024,\n"
+	"                     or its small receive buffer overflows. Default none.\n"
 	"\n"
 	"output options:\n"
 	"  --out DIR          Parent directory for the run directories. Default\n"
@@ -196,8 +204,8 @@ static const char* USAGE =
 	"  --max-carriers N   How many candidates the decode stage takes, strongest\n"
 	"                     first. Default 15.\n"
 	"\n"
-	"\"sweep\" also takes --rate, --gain, --device, --rx, --antenna and --tune-offset, with the\n"
-	"same defaults as \"run\".\n"
+	"\"sweep\" also takes --rate, --gain, --device, --rx, --antenna, --device-args and\n"
+	"--tune-offset, with the same defaults as \"run\".\n"
 	"\n"
 	"Close SDR++ before a run if it holds the receiver.\n";
 
@@ -213,6 +221,7 @@ struct Args {
 	int device = 0;
 	int rx = 0;
 	const char* antenna = nullptr;
+	const char* device_args = nullptr;
 	// Below zero means the automatic gain of the tuner.
 	double gain_db = -1;
 	bool per_carrier = false;
@@ -298,7 +307,7 @@ static SweepArgs parse_sweep_args(int argc, char** argv)
 	// with no arguments finds a network wherever it sits in it. A rate of 0
 	// means the widest span that still holds that allocation.
 	SweepArgs s = { TETRA_BAND_LO, TETRA_BAND_HI, 0, 12500, DEFAULT_TUNE_OFFSET,
-			-1, 0, 0.2, 15, 6, 15, 0, nullptr };
+			-1, 0, 0.2, 15, 6, 15, 0, nullptr, nullptr };
 	for (int i = 1; i < argc; i++) {
 		std::string t = argv[i];
 		auto val = [&]() -> std::string { if (++i >= argc) die(t + " needs a value"); return argv[i]; };
@@ -322,6 +331,10 @@ static SweepArgs parse_sweep_args(int argc, char** argv)
 		else if (t == "--antenna") {
 			if (++i >= argc) die(t + " needs a value");
 			s.antenna = argv[i];
+		}
+		else if (t == "--device-args") {
+			if (++i >= argc) die(t + " needs a value");
+			s.device_args = argv[i];
 		}
 		else if (t == "--gain") {
 			std::string g = val();
@@ -363,6 +376,10 @@ static Args parse_args(int argc, char** argv)
 		else if (s == "--antenna") {
 			if (++i >= argc) die(s + " needs a value");
 			a.antenna = argv[i];
+		}
+		else if (s == "--device-args") {
+			if (++i >= argc) die(s + " needs a value");
+			a.device_args = argv[i];
 		}
 		else if (s == "--gain") {
 			std::string g = val();
@@ -803,6 +820,33 @@ int main(int argc, char** argv)
 	sa.sa_handler = on_signal;
 	sigaction(SIGCHLD, &sa, nullptr);
 
+	int block = iq_block(src.rate);
+	// A wide span goes through the filter bank, and each slot then filters
+	// only the sub-band that holds its carrier. FFTW plans the bank for some
+	// seconds, so this comes before the radio streams into a buffer that no
+	// one reads.
+	Channelizer bank;
+	bank.init(src.rate, block);
+	std::vector<dsp::channel::RxVFO> vfos(n);
+	std::vector<int> band(n);
+	{
+		// The resampler prints a line for each VFO. Keep it out of the log.
+		int saved = quiet_begin();
+		// A free slot is parked at the centre. Its child discards the samples
+		// until the parent gives the slot a frequency.
+		for (size_t i = 0; i < n; i++) {
+			double rest;
+			band[i] = bank.channel_of(i < a.hz.size() ? (double)a.hz[i] + a.tune_offset - src.center : 0,
+						  &rest);
+			bank.use(band[i]);
+			vfos[i].init(nullptr, bank.out_rate(), VFO_RATE, VFO_BW, rest);
+		}
+		quiet_end(saved);
+	}
+	if (bank.channels() > 1)
+		std::cout << "tetra-analyze: filter bank of " + std::to_string(bank.channels()) +
+				 " sub-bands at " + std::to_string((long long)bank.out_rate()) + " S/s\n";
+
 	if (src.fd < 0) {
 		RadioOpen cfg{};
 		cfg.center_hz = (uint32_t)src.center;
@@ -810,6 +854,7 @@ int main(int argc, char** argv)
 		cfg.index = a.device;
 		cfg.channel = a.rx;
 		cfg.antenna = a.antenna;
+		cfg.args = a.device_args;
 		cfg.gain_tenth_db = a.gain_db < 0 ? -1 : (int)llround(a.gain_db * 10);
 		int saved = quiet_begin();
 		RadioErr rc = radio_open(&src.radio, cfg);
@@ -840,24 +885,12 @@ int main(int argc, char** argv)
 	// A dead stitch or carrier child ends the run. The handler has no SA_RESTART,
 	// so it also breaks the blocking read. Systemd starts a new tree.
 
-	std::vector<dsp::channel::RxVFO> vfos(n);
-	{
-		// The resampler prints a line for each VFO. Keep it out of the log.
-		int saved = quiet_begin();
-		// A free slot is parked at the centre. Its child discards the samples
-		// until the parent gives the slot a frequency.
-		for (size_t i = 0; i < n; i++)
-			vfos[i].init(nullptr, src.rate, VFO_RATE, VFO_BW,
-				     i < a.hz.size() ? (double)a.hz[i] + a.tune_offset - src.center : 0);
-		quiet_end(saved);
-	}
-
 	int bytes_per = src.fmt == Fmt::cf32 ? 8 : src.fmt == Fmt::cs16 ? 4 : 2;
-	int block = iq_block(src.rate);
 	std::vector<uint8_t> raw(block * bytes_per);
 	auto* in = dsp::buffer::alloc<dsp::complex_t>(block);
 	std::vector<dsp::complex_t*> tmp(n);
 	for (auto& p : tmp) p = dsp::buffer::alloc<dsp::complex_t>(block);
+	std::vector<int> made(n);
 	size_t have = src.pending.size();
 	memcpy(raw.data(), src.pending.data(), have);
 
@@ -881,7 +914,10 @@ int main(int argc, char** argv)
 		int cnt = 0;
 		if (src.radio) {
 			int got = radio_read(src.radio, (float*)in, block);
-			if (got < 0) break;
+			if (got < 0) {
+				std::cout << "tetra-analyze: the receiver stopped\n";
+				break;
+			}
 			if (got == 0) continue;
 			cnt = got;
 			dropped = radio_overflows(src.radio);
@@ -892,16 +928,28 @@ int main(int argc, char** argv)
 				std::cout << "tetra-analyze: read: " + std::string(strerror(errno)) + "\n";
 				break;
 			}
-			if (r == 0) break;
 			have += r;
+			// A pipe gives 64 KB at a time. A wide span waits for a whole
+			// block, so that each pass gives the threads of the bank enough
+			// work. At the end of the input it takes what is left.
+			if (r > 0 && bank.channels() > 1 && have < raw.size()) continue;
+			if (r == 0 && have < (size_t)bytes_per) break;
 			cnt = (int)(have / bytes_per);
 			to_cf32(src.fmt, raw.data(), cnt, in);
 			have -= (size_t)cnt * bytes_per;
 			memmove(raw.data(), raw.data() + (size_t)cnt * bytes_per, have);
 		}
+		int sub = bank.process(cnt, in);
+		// The slots are independent, so the workers of the bank share them.
+		// Without a bank there is one worker, and this is the plain loop.
+		int nw = bank.workers();
+		run_parallel(nw, [&](int w) {
+			for (size_t i = w; i < n; i += nw)
+				made[i] = pipes[i] >= 0 ? vfos[i].process(sub, bank.out(band[i]), tmp[i]) : 0;
+		});
 		for (size_t i = 0; i < n; i++) {
 			if (pipes[i] < 0) continue;
-			int m = vfos[i].process(cnt, in, tmp[i]);
+			int m = made[i];
 			// Every VFO gets the same input count. Child 0 counts exactly these samples.
 			if (!i) vfo_samples += m;
 			if (write_all(pipes[i], tmp[i], m * sizeof(dsp::complex_t))) continue;
@@ -918,7 +966,10 @@ int main(int argc, char** argv)
 		while (allocations.take(&d)) {
 			int slot = allocations.assign(d.hz);
 			if (slot < 0) continue;
-			vfos[slot].setOffset((double)d.hz + a.tune_offset - src.center);
+			double rest;
+			band[slot] = bank.channel_of((double)d.hz + a.tune_offset - src.center, &rest);
+			bank.use(band[slot]);
+			vfos[slot].setOffset(rest);
 			std::cout << "tetra-analyze: slot " + std::to_string(slot) + " takes " +
 					 std::to_string(d.hz) + " Hz, granted to GSSI " +
 					 std::to_string(d.ssi) + " by " + std::to_string(d.control_hz) +

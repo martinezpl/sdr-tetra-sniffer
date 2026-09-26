@@ -11,6 +11,7 @@ struct RadioOpen {
 	int index = 0;
 	int channel = 0;           // Soapy RX channel
 	const char* antenna = nullptr;  // Soapy RX antenna; null keeps the driver default
+	const char* args = nullptr;     // Soapy device arguments, KEY=VALUE,...; null adds none
 	int gain_tenth_db = -1;
 };
 
@@ -54,6 +55,7 @@ uint64_t radio_overflows(const Radio* radio);
 int radio_read(Radio* radio, float* iq, int n_complex);
 const char* radio_error(RadioErr err);
 RadioDetect radio_detect(size_t soapy_count, const UsbId* ids, size_t n);
+uint32_t radio_settled_rate(double got, uint32_t asked);
 
 void radio_fake_plug(bool present);
 void radio_fake_queue(const float* interleaved_iq, size_t n_complex);

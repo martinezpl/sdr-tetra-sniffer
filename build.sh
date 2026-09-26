@@ -24,6 +24,12 @@ pkg_have() {
 }
 
 apt_updated=0
+# apt installs Recommends by default, and libsoapysdr0.8 recommends
+# soapysdr0.8-module-all. That package brings the audio, remote and osmosdr
+# modules that the module step skips on purpose. So the host step sets this
+# to --no-install-recommends. The module step does not, because
+# liblimesuite gets its udev rules from a Recommends.
+apt_opts=
 pkg_install() {
 	case $(uname -s) in
 	Darwin)
@@ -39,9 +45,9 @@ pkg_install() {
 			apt_updated=1
 		fi
 		if [ "$(id -u)" -eq 0 ]; then
-			apt-get install -y "$@"
+			apt-get install -y $apt_opts "$@"
 		elif command -v sudo >/dev/null 2>&1; then
-			sudo apt-get install -y "$@"
+			sudo apt-get install -y $apt_opts "$@"
 		else
 			echo "install as root: apt-get install $*" >&2
 			return 1
@@ -58,11 +64,14 @@ host_packages() {
 	case $(uname -s) in
 	Darwin)
 		# coreutils gives md5sum for the ETSI codec script.
-		printf '%s\n' cmake volk soapysdr coreutils
+		printf '%s\n' cmake volk soapysdr fftw coreutils
 		;;
 	Linux)
+		# ca-certificates lets git and curl use HTTPS. With Recommends
+		# off, git no longer brings it. soapysdr-tools gives SoapySDRUtil.
 		printf '%s\n' build-essential cmake git curl unzip patch \
-			libvolk-dev libsoapysdr-dev
+			ca-certificates libvolk-dev libsoapysdr-dev libfftw3-dev \
+			soapysdr-tools
 		;;
 	esac
 }
@@ -120,7 +129,9 @@ EOF
 	[ -n "$have" ] && echo "already installed:${have}"
 	if [ -n "$need" ]; then
 		echo "installing:${need}"
+		apt_opts=--no-install-recommends
 		pkg_install $need
+		apt_opts=
 	else
 		echo "nothing new to install"
 	fi

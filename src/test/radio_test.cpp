@@ -23,6 +23,10 @@ static void pass(const char* name)
 
 int main()
 {
+	check(radio_settled_rate(5999999, 6000000) == 6000000, "a rounded read-back keeps the asked rate");
+	check(radio_settled_rate(0, 3200000) == 3200000, "no read-back keeps the asked rate");
+	check(radio_settled_rate(2400000, 3200000) == 2400000, "a real snap is kept");
+	pass("radio_settled_rate");
 	{
 		Radio* r = nullptr;
 		RadioOpen cfg{};
@@ -190,7 +194,10 @@ int main()
 		check(u.err == RadioErr::not_found, "unknown not_found");
 
 		UsbId usrp{0x2500, 0x0020};
-		check(radio_detect(0, &usrp, 1).err == RadioErr::not_found, "USRP not in table");
+		RadioDetect b210 = radio_detect(0, &usrp, 1);
+		check(b210.err == RadioErr::not_recognized && b210.name &&
+			      std::strcmp(b210.name, "USRP B200/B210") == 0,
+		      "USRP B210");
 
 		RadioDetect soapy = radio_detect(1, nullptr, 0);
 		check(soapy.err == RadioErr::ok, "soapy ok");
@@ -207,9 +214,12 @@ int main()
 		check(err == RadioErr::not_recognized, "open known USB");
 		check(poison == (Radio*)0x1, "handle unchanged");
 		const char* msg = radio_error(RadioErr::not_recognized);
-		check(std::strstr(msg, "soapysdr-module-") != nullptr ||
-			      std::strstr(msg, "soapy") != nullptr,
-		      "module package");
+		// The hint depends on this host: its rtlsdr module is loaded, or not.
+		check(std::strstr(msg, "RTL-SDR found") != nullptr &&
+			      (std::strstr(msg, "\"rtlsdr\" is loaded") != nullptr ||
+			       std::strstr(msg, "apt install soapysdr-module-rtlsdr") != nullptr ||
+			       std::strstr(msg, "brew install soapyrtlsdr") != nullptr),
+		      "hint names the module");
 		radio_fake_usb(nullptr, 0);
 		pass("radio_open not_recognized");
 	}

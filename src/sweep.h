@@ -26,6 +26,7 @@ struct SweepArgs {
 	size_t max_carriers;       // how many candidates the decode stage takes
 	int rx;                    // Soapy RX channel, default 0
 	const char* antenna;       // Soapy RX antenna; null keeps the driver default
+	const char* device_args;   // Soapy device arguments, KEY=VALUE,...; null adds none
 };
 
 int sweep_main(const SweepArgs& a);

@@ -2,6 +2,7 @@
 
 #include <SoapySDR/Device.hpp>
 #include <SoapySDR/Formats.h>
+#include <SoapySDR/Registry.hpp>
 
 #include <atomic>
 #include <cctype>
@@ -24,7 +25,7 @@ enum class Fake { off, present, absent };
 static Fake g_fake = Fake::off;
 static Radio* g_fake_radio;
 static constexpr uint32_t kFakeNativeRate = 20000000;
-static char g_last_error[96];
+static char g_last_error[256];
 static std::vector<UsbId> g_usb_fake;
 static bool g_usb_fake_on = false;
 
@@ -43,26 +44,60 @@ struct Radio {
 	std::condition_variable cv;
 	SoapySDR::Device* dev = nullptr;
 	SoapySDR::Stream* stream = nullptr;
+	std::chrono::steady_clock::time_point last_data;
 };
 
+// A receiver that is gone gives a timeout for ever, not an error. A stream
+// that gives no sample and no overflow for this long is a lost receiver.
+static constexpr auto kSilence = std::chrono::seconds(5);
+
+// A stick that USB shows but Soapy does not open. The hints were checked
+// against Debian 13 (apt) and Homebrew in September 2026. Where no package
+// exists, the hint names the Soapy module to build.
 struct Known {
 	uint16_t vid, pid;
 	const char* name;
-	const char* deb;
-	const char* brew;
+	const char* factory;  // the Soapy driver key of its module
+	const char* deb;      // what to do with apt
+	const char* brew;     // what to do with Homebrew
+	const char* loaded;   // what to check when its module is loaded, or null
 };
 
+static const char* kUhdLoaded =
+	"UHD needs its images: run uhd_images_downloader, then check that "
+	"uhd_config_info --images-dir names the directory it filled.";
+
 static const Known kKnown[] = {
-	{0x0bda, 0x2838, "RTL-SDR", "soapysdr-module-rtlsdr", "soapyrtlsdr"},
-	{0x0bda, 0x2832, "RTL-SDR", "soapysdr-module-rtlsdr", "soapyrtlsdr"},
-	{0x1d50, 0x6089, "HackRF", "soapysdr-module-hackrf", "soapyhackrf"},
-	{0x1d50, 0x604b, "HackRF", "soapysdr-module-hackrf", "soapyhackrf"},
-	{0x1d50, 0x60a1, "Airspy", "soapysdr-module-airspy", "soapyairspy"},
-	{0x2cf0, 0x5250, "bladeRF", "soapysdr-module-bladerf", nullptr},
-	{0x0403, 0x601f, "LimeSDR", "soapysdr-module-lms7", "limesuite"},
-	{0x1d50, 0x6108, "LimeSDR", "soapysdr-module-lms7", "limesuite"},
-	{0x0456, 0xb673, "Pluto", "soapysdr-module-plutosdr", nullptr},
-	{0x1df7, 0x3000, "SDRplay", "soapysdr-module-sdrplay", nullptr},
+	{0x0bda, 0x2838, "RTL-SDR", "rtlsdr", "apt install soapysdr-module-rtlsdr",
+	 "brew install soapyrtlsdr", nullptr},
+	{0x0bda, 0x2832, "RTL-SDR", "rtlsdr", "apt install soapysdr-module-rtlsdr",
+	 "brew install soapyrtlsdr", nullptr},
+	{0x1d50, 0x6089, "HackRF", "hackrf", "apt install soapysdr-module-hackrf",
+	 "brew install soapyhackrf", nullptr},
+	{0x1d50, 0x604b, "HackRF", "hackrf", "apt install soapysdr-module-hackrf",
+	 "brew install soapyhackrf", nullptr},
+	{0x1d50, 0x60a1, "Airspy", "airspy", "apt install soapysdr-module-airspy",
+	 "build SoapyAirspy, because Homebrew has no formula for it", nullptr},
+	{0x2cf0, 0x5250, "bladeRF", "bladerf", "apt install soapysdr-module-bladerf",
+	 "build SoapyBladeRF, because Homebrew has no formula for it", nullptr},
+	{0x0403, 0x601f, "LimeSDR", "lime", "apt install soapysdr-module-lms7",
+	 "brew install limesuite", nullptr},
+	{0x1d50, 0x6108, "LimeSDR", "lime", "apt install soapysdr-module-lms7",
+	 "brew install limesuite", nullptr},
+	{0x0456, 0xb673, "Pluto", "plutosdr",
+	 "apt install soapysdr-module-plutosdr where apt has it (Debian 13 does not), "
+	 "or build SoapyPlutoSDR",
+	 "build SoapyPlutoSDR, because Homebrew has no formula for it",
+	 "For the USB path, install libiio-utils: the libiio udev rule runs iio_info."},
+	{0x1df7, 0x3000, "SDRplay", "sdrplay",
+	 "install the SDRplay API from sdrplay.com, then build SoapySDRPlay3",
+	 "install the SDRplay API from sdrplay.com, then build SoapySDRPlay3", nullptr},
+	{0x2500, 0x0020, "USRP B200/B210", "uhd", "apt install soapysdr-module-uhd uhd-host",
+	 "brew install uhd, then build SoapyUHD", kUhdLoaded},
+	{0x2500, 0x0021, "USRP B200mini", "uhd", "apt install soapysdr-module-uhd uhd-host",
+	 "brew install uhd, then build SoapyUHD", kUhdLoaded},
+	{0x2500, 0x0022, "USRP B205mini", "uhd", "apt install soapysdr-module-uhd uhd-host",
+	 "brew install uhd, then build SoapyUHD", kUhdLoaded},
 };
 
 void radio_fake_plug(bool present)
@@ -189,19 +224,44 @@ static std::vector<UsbId> list_usb()
 	return list_os_usb();
 }
 
+static bool factory_loaded(const char* factory)
+{
+	try {
+		return SoapySDR::Registry::listFindFunctions().count(factory) > 0;
+	} catch (...) {
+		return false;
+	}
+}
+
+// A stick that USB shows and Soapy does not list. Either its module is
+// missing, or the module is there and cannot open it.
 static void set_not_recognized(const char* name)
 {
-	const char* pkg = "";
-	for (const auto& d : kKnown) {
-		if (strcmp(d.name, name) != 0) continue;
-#ifdef __APPLE__
-		pkg = d.brew ? d.brew : d.deb;
-#else
-		pkg = d.deb;
-#endif
-		break;
+	const Known* k = nullptr;
+	for (const auto& d : kKnown)
+		if (strcmp(d.name, name) == 0) {
+			k = &d;
+			break;
+		}
+	if (!k) {
+		snprintf(g_last_error, sizeof g_last_error, "%s found, but no Soapy module lists it", name);
+		return;
 	}
-	snprintf(g_last_error, sizeof g_last_error, "%s found, install %s", name, pkg);
+	if (factory_loaded(k->factory)) {
+		snprintf(g_last_error, sizeof g_last_error,
+			 "%s found, and the Soapy module \"%s\" is loaded, but it lists no device. %s",
+			 name, k->factory,
+			 k->loaded ? k->loaded
+				   : "Another program can hold it, or your user can lack a udev rule for it.");
+		return;
+	}
+#ifdef __APPLE__
+	const char* how = k->brew;
+#else
+	const char* how = k->deb;
+#endif
+	snprintf(g_last_error, sizeof g_last_error, "%s found, but no Soapy module for it is loaded: %s",
+		 name, how);
 }
 
 void radio_fake_queue(const float* interleaved_iq, size_t n_complex)
@@ -229,6 +289,28 @@ static void unmake(Radio* r)
 	r->dev = nullptr;
 }
 
+// SoapyRTLSDR starts its reader thread in activateStream, and the thread
+// starts rtlsdr_read_async a moment later. A deactivateStream in that gap
+// cancels nothing, then it waits for the thread forever. Only a started
+// reader gives samples or an overflow, so wait for one of those. The wait
+// stops after about one second, and then the gap is certainly closed.
+// The samples go to waste, the same as the samples that discard() drops.
+static bool soapy_activate(Radio* r)
+{
+	if (r->dev->activateStream(r->stream) != 0) return false;
+	std::vector<float> scratch(2 * 4096);
+	void* buffs[] = { scratch.data() };
+	for (int i = 0; i < 10; i++) {
+		int flags = 0;
+		long long timeNs = 0;
+		int ret = r->dev->readStream(r->stream, buffs, scratch.size() / 2, flags, timeNs,
+					     (long)RADIO_READ_TIMEOUT_MS * 1000);
+		if (ret > 0 || ret == SOAPY_SDR_OVERFLOW) break;
+	}
+	r->last_data = std::chrono::steady_clock::now();
+	return true;
+}
+
 static void discard(Radio* r)
 {
 	if (r->fake) {
@@ -239,7 +321,7 @@ static void discard(Radio* r)
 	if (!r->dev || !r->stream) return;
 	try {
 		r->dev->deactivateStream(r->stream);
-		r->dev->activateStream(r->stream);
+		soapy_activate(r);
 	} catch (...) {}
 }
 
@@ -280,12 +362,21 @@ static uint32_t soapy_best_rate(SoapySDR::Device* dev, size_t channel, uint32_t 
 	return best;
 }
 
+// Some drivers read the rate back rounded: a Pluto set to 6 MS/s says
+// 5999999. Keep the rate that was asked for when the two agree to 10 ppm. An
+// odd rate stops the filter bank, and it gives each slot a resampler of 36000
+// phases. A real snap to another rate differs by far more.
+uint32_t radio_settled_rate(double got, uint32_t asked)
+{
+	if (got <= 0 || std::fabs(got - asked) <= 1e-5 * asked) return asked;
+	return (uint32_t)llround(got);
+}
+
 static bool soapy_apply_rate(Radio* r, uint32_t rate)
 {
 	try {
 		r->dev->setSampleRate(SOAPY_SDR_RX, r->channel, rate);
-		double got = r->dev->getSampleRate(SOAPY_SDR_RX, r->channel);
-		r->rate_hz = got > 0 ? (uint32_t)got : rate;
+		r->rate_hz = radio_settled_rate(r->dev->getSampleRate(SOAPY_SDR_RX, r->channel), rate);
 		return r->rate_hz > 0;
 	} catch (...) {
 		r->rate_hz = 0;
@@ -293,19 +384,39 @@ static bool soapy_apply_rate(Radio* r, uint32_t rate)
 	}
 }
 
-// Rate 0: take the widest listed rate at or below cap (cap 0 = no cap).
-// Try the cap itself first, so a continuous-range device can hit the span
-// exactly. If a setting is refused or snaps above the cap, try successively
-// halved rates so a stick that advertises more than it can stream still opens.
-// An explicit rate is tried once.
+// Rate 0: take the widest rate at or below cap (cap 0 = no cap). Try the cap
+// itself first, so that a continuous range hits the span exactly. Keep a rate
+// only if the range that the device gives after the change still holds it: a
+// Lime took 62.5375 MS/s, outside its own range of 61.44. A device with a
+// master clock can list only the rates of its present clock: a B210 lists 16
+// MS/s and throws for the cap, but it takes 61.44 when asked. So such a device
+// also tries the usual fast rates. Then take the widest rate that the device
+// lists, or that its range reaches. If a setting is refused or snaps above the
+// cap, try successively halved rates so a stick that advertises more than it
+// can stream still opens. An explicit rate is tried once.
 static bool soapy_choose_rate(Radio* r, uint32_t wanted, uint32_t cap)
 {
 	if (wanted) return soapy_apply_rate(r, wanted);
 	auto ok = [&](uint32_t rate) {
 		return soapy_apply_rate(r, rate) && (!cap || r->rate_hz <= cap);
 	};
-	if (cap && ok(cap)) return true;
+	auto held = [&](uint32_t rate) {
+		return ok(rate) && soapy_best_rate(r->dev, (size_t)r->channel, 0) >= r->rate_hz;
+	};
 	uint32_t best = soapy_best_rate(r->dev, (size_t)r->channel, cap);
+	if (cap) {
+		if (held(cap)) return true;
+		double clock = 0;
+		try {
+			clock = r->dev->getMasterClockRate();
+		} catch (...) {
+		}
+		// Each of these splits into whole sub-bands for the filter bank.
+		static const uint32_t kFast[] = { 61440000, 56000000, 50000000, 40000000, 30720000, 20000000 };
+		if (clock > 0)
+			for (uint32_t fast : kFast)
+				if (fast < cap && fast > best && held(fast)) return true;
+	}
 	if (best && ok(best)) return true;
 	uint32_t start = best ? best : cap;
 	for (uint32_t u = start / 2; u >= 100000; u /= 2)
@@ -319,7 +430,7 @@ static bool soapy_start_stream(Radio* r)
 	try {
 		r->stream = r->dev->setupStream(SOAPY_SDR_RX, SOAPY_SDR_CF32,
 						{(size_t)r->channel});
-		if (!r->stream || r->dev->activateStream(r->stream) != 0) {
+		if (!r->stream || !soapy_activate(r)) {
 			close_stream(r);
 			return false;
 		}
@@ -342,17 +453,29 @@ static RadioErr soapy_open(Radio* r, const RadioOpen& cfg)
 	}
 	if (cfg.index < 0 || (size_t)cfg.index >= devs.size()) return RadioErr::bad_index;
 	try {
-		r->dev = SoapySDR::Device::make(devs[(size_t)cfg.index]);
+		// The driver reads its own keys, such as num_recv_frames for UHD.
+		SoapySDR::Kwargs args = devs[(size_t)cfg.index];
+		if (cfg.args && *cfg.args)
+			for (const auto& kv : SoapySDR::KwargsFromString(cfg.args)) args[kv.first] = kv.second;
+		r->dev = SoapySDR::Device::make(args);
 	} catch (...) {
 		return RadioErr::busy;
 	}
 	if (!r->dev) return RadioErr::busy;
-	try {
-		r->driver = r->dev->getDriverKey();
-		for (char& c : r->driver) c = (char)std::tolower((unsigned char)c);
-	} catch (...) {
-		r->driver.clear();
+	// The driver name that enumerate() gives, such as rtlsdr or lime.
+	// getDriverKey() can name the USB chip instead: a LimeSDR-USB says FX3.
+	const SoapySDR::Kwargs& args = devs[(size_t)cfg.index];
+	auto key = args.find("driver");
+	if (key != args.end()) {
+		r->driver = key->second;
+	} else {
+		try {
+			r->driver = r->dev->getDriverKey();
+		} catch (...) {
+			r->driver.clear();
+		}
 	}
+	for (char& c : r->driver) c = (char)std::tolower((unsigned char)c);
 	r->channel = cfg.channel;
 	try {
 		size_t n = r->dev->getNumChannels(SOAPY_SDR_RX);
@@ -379,6 +502,19 @@ static RadioErr soapy_open(Radio* r, const RadioOpen& cfg)
 		} catch (...) {
 			unmake(r);
 			return RadioErr::bad_antenna;
+		}
+	} else if (r->driver == "lime") {
+		// The Lime driver picks LNAL. LNAW is the wideband input of a
+		// LimeSDR-USB and the input below 2 GHz of a LimeSDR Mini, so it
+		// hears TETRA on both. A LimeSDR-USB with its antenna on RX1_L needs
+		// --antenna LNAL. The sweep line and the run line show the input.
+		try {
+			for (const auto& name : r->dev->listAntennas(SOAPY_SDR_RX, r->channel))
+				if (name == "LNAW") {
+					r->dev->setAntenna(SOAPY_SDR_RX, r->channel, "LNAW");
+					break;
+				}
+		} catch (...) {
 		}
 	}
 	// Soapy drivers require a sample rate before activateStream. Rate 0
@@ -511,8 +647,8 @@ RadioErr radio_set_rate(Radio* radio, uint32_t rate_hz)
 	if (!radio->fake) {
 		try {
 			radio->dev->setSampleRate(SOAPY_SDR_RX, radio->channel, rate_hz);
-			double got = radio->dev->getSampleRate(SOAPY_SDR_RX, radio->channel);
-			radio->rate_hz = got > 0 ? (uint32_t)got : rate_hz;
+			radio->rate_hz = radio_settled_rate(
+				radio->dev->getSampleRate(SOAPY_SDR_RX, radio->channel), rate_hz);
 		} catch (...) {
 			return RadioErr::bad_rate;
 		}
@@ -581,6 +717,9 @@ int radio_read(Radio* radio, float* iq, int n_complex)
 	int ret = radio->dev->readStream(radio->stream, buffs, (size_t)n_complex, flags, timeNs,
 					 (long)RADIO_READ_TIMEOUT_MS * 1000);
 	if (radio->stopped.load()) return -1;
+	auto now = std::chrono::steady_clock::now();
+	if (ret > 0 || ret == SOAPY_SDR_OVERFLOW) radio->last_data = now;
+	else if (now - radio->last_data > kSilence) return -1;
 	if (ret == SOAPY_SDR_TIMEOUT) return 0;
 	if (ret == SOAPY_SDR_OVERFLOW) {
 		radio->overflows.fetch_add(1);
@@ -600,7 +739,8 @@ const char* radio_error(RadioErr err)
 	case RadioErr::not_recognized:
 		return g_last_error[0] ? g_last_error : "the SDR was not recognized";
 	case RadioErr::busy:
-		return "the receiver did not open (quit SDR++ if it holds the dongle)";
+		return "the receiver did not open. Another program (SDR++, for example) can hold it, "
+		       "or its driver failed and printed the reason above";
 	case RadioErr::refused: return "the receiver refused the request";
 	case RadioErr::bad_index: return "there is no receiver at that device index";
 	case RadioErr::bad_channel: return "there is no RX channel at that index";

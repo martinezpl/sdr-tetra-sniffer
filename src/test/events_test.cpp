@@ -1,9 +1,11 @@
+#include "allocations.h"
 #include "recorder.h"
 
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
 
@@ -115,6 +117,23 @@ int main()
 		r.on_voice(pcm, 480);
 		r.finish();
 		check_wav(wavp, 2880);
+	}
+	{
+		// The centre of a wide span can sit between two networks, 17 MHz from
+		// this one. A grant is judged against the carrier that sent it, so a
+		// carrier 0.5 MHz from its control carrier is a carrier, not BADFREQ.
+		const uint32_t control = 390137500, traffic = 390637500;
+		Allocations alloc = Allocations::create({ control }, 2);
+		std::string wide = d + "/wide";
+		mkdir(wide.c_str(), 0755);
+		Recorder r(control, wide, "2026-09-26T19:37:29Z", 61440000, &alloc, false, 407790000);
+		tetra_mac_event g = ev(TETRA_EV_RESOURCE, 1, -1, 5019918, 10, 0, 0, traffic, 3, 0, 0x02);
+		g.speech = 1;
+		r.on_event(g);
+		r.finish();
+		std::string calls = slurp(wide + "/calls.log");
+		check(calls.find(" UNTUNED") != std::string::npos,
+		      "a grant inside a wide span is UNTUNED, not: " + calls);
 	}
 	return fails ? 1 : 0;
 }

@@ -69,7 +69,7 @@ its four cores, at 92 MB for the whole tree.
 
 ### Packages
 
-`./build.sh` installs the compiler tools, cmake, volk, SoapySDR, and every
+`./build.sh` installs the compiler tools, cmake, volk, SoapySDR, FFTW, and every
 hardware Soapy module this OS lists (`soapysdr-module-*` on apt, `soapy*`
 plus `limesuite` on Homebrew). It skips the kitchen-sink `-all` package and
 the remote/audio/osmosdr wrappers, which conflict or are not a stick.
@@ -86,9 +86,31 @@ What the two reference hosts typically ship:
 | Airspy | `soapysdr-module-airspy` | not in brew-core |
 | bladeRF | `soapysdr-module-bladerf` | not in brew-core |
 | LimeSDR | `soapysdr-module-lms7` | `limesuite` |
-| USRP | `soapysdr-module-uhd` | not in brew-core |
-| Pluto | `soapysdr-module-plutosdr` | not in brew-core |
-| SDRplay | `soapysdr-module-sdrplay` | not in brew-core |
+| USRP | `soapysdr-module-uhd`, and `uhd-host` for the images | `uhd`; SoapyUHD is not in brew-core |
+| Pluto | not in Debian 13 (sid has `soapysdr-module-plutosdr`); build SoapyPlutoSDR | not in brew-core |
+| SDRplay | not packaged: the SDRplay API, then SoapySDRPlay3 | not in brew-core |
+
+A USRP also needs the firmware and FPGA images of UHD. On Debian 13 the
+downloader puts them where libuhd does not look, so name the directory:
+
+```
+sudo uhd_images_downloader -t b2xx -i /usr/share/uhd/images
+```
+
+At a wide rate a USRP also needs a larger receive buffer. UHD's default
+buffer overflows at 61.44 MS/s while the program works on a block. Give
+`--device-args num_recv_frames=1024` to `sweep`, and the run lines it prints
+carry it. Linux limits USB buffers to 16 MB (`usbfs_memory_mb`), so 1024
+frames is the largest that opens.
+
+When USB shows a known receiver that Soapy does not list, the program says
+whether its Soapy module is missing or loaded, and what to do next.
+
+A LimeSDR has more than one RX input, and each has its own connector. The
+program uses LNAW (RX1_W on a LimeSDR-USB) unless `--antenna` names another.
+A LimeSDR-USB with its antenna on RX1_L needs `--antenna LNAL`. An input with
+no antenna shows only the DC spike at the centre of the span. A LimeSDR has no
+automatic gain, so "auto" keeps the gain of the driver, 32 dB.
 
 ### Active TETRA network in range
 `sweep` runs a scan for active control carriers across the TETRA spectrum, and the traffic carriers are then learned from the grants that the
@@ -321,7 +343,12 @@ It owns the receiver. A reader thread takes blocks from it into a bounded queue;
 an overflow drops the newest block and counts it in `clock.log`. The main loop converts each block
 to complex float and runs one channelizer for each carrier. A channelizer
 shifts its carrier down to baseband and lowers the sample rate, so a child
-works on one narrow stream instead of the whole span. The result goes down
+works on one narrow stream instead of the whole span. A span wider than
+4 MS/s first goes through a polyphase filter bank (`src/pfb.cpp`). The bank
+splits the span into sub-bands at most 0.5 MHz apart, on up to four
+threads, and each channelizer then works on the sub-band of its carrier.
+Without the bank, each channelizer filters the full rate, and a full
+61.44 MS/s span with 15 carriers would need about 4.6 cores. The result goes down
 that carrier's pipe. The parent also writes `clock.log`
 and answers the systemd watchdog. It is the only process that touches the
 full-rate stream, so it costs far more than any other.
@@ -417,15 +444,21 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for how to ensure no regressions.
 
 ## To be optimized
 
-**The parent is the only serial stage.** It is the one process that touches
-the full-rate stream, and its channelizer loop runs on one thread. Each
+**A narrow span still runs on one thread.** At 4 MS/s or less the parent
+has no filter bank, and its channelizer loop runs on one thread. Each
 carrier costs about 1.6% of one core there, against about 1.5% in its own
 child, which the other cores absorb. At 13 carriers the parent takes about
-41% of a core; at 25 it takes about 40%, and past that it is the wall. A
-thread pool over the channelizer, or an FFT channelizer in place of one VFO
-for each carrier, is the fix. It was measured:
+41% of a core. A wide span already uses the filter bank and its threads:
+on a Pi 5, 24 carriers at 61.44 MS/s take 2.9 s for 3.9 s of signal. The
+channelizers of a narrow span could use the same threads.
 `volk-config-info --machine` gives `neonv8_orc` on a Pi 5, so the NEON
 kernels already carry the present load.
+
+**FFTW plans the filter bank for about 3.7 s at the start.** `FFTW_MEASURE`
+tries many ways to do the FFT and keeps the fastest, which is 37% faster
+than the plan it would guess. A run plans before it opens the radio, so no
+sample is lost. Saving the FFTW wisdom to a file would make the next start
+instant.
 
 **A free pool slot costs as much as a busy one.** The parent runs the
 channelizer for every slot, assigned or not, so that all children count the
