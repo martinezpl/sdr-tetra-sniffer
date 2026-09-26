@@ -403,8 +403,10 @@ int sweep_main(const SweepArgs& a)
 		}
 		if (best) peaks.push_back(i);
 	}
-	printf("tetra-analyze: %zu peak(s) at or above %.1f dB over the noise floor\n", peaks.size(),
-	       a.threshold_db);
+	// After a receiver failure the counts mean nothing, so say nothing.
+	if (!status)
+		printf("tetra-analyze: %zu peak(s) at or above %.1f dB over the noise floor\n", peaks.size(),
+		       a.threshold_db);
 
 	// Group the peaks into spans to decode in. A band wider than one span needs
 	// several, and every one that holds a peak is worth a dwell, because a
@@ -423,7 +425,7 @@ int sweep_main(const SweepArgs& a)
 		}
 		groups.push_back({ k });
 	}
-	printf("tetra-analyze: %zu span(s) to decode\n", groups.size());
+	if (!status) printf("tetra-analyze: %zu span(s) to decode\n", groups.size());
 
 	// A span with more candidates than --max-carriers gets more than one dwell,
 	// strongest first. A wide span holds the whole band, so it often does.

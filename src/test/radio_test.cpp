@@ -189,6 +189,11 @@ int main()
 		UsbId sdrplay{0x1df7, 0x3000};
 		check(radio_detect(0, &sdrplay, 1).err == RadioErr::not_recognized, "SDRplay");
 
+		UsbId bladerf1{0x1d50, 0x6066};
+		RadioDetect b1 = radio_detect(0, &bladerf1, 1);
+		check(b1.err == RadioErr::not_recognized && b1.name && std::strcmp(b1.name, "bladeRF") == 0,
+		      "bladeRF 1");
+
 		UsbId unknown{0x1234, 0x0001};
 		RadioDetect u = radio_detect(0, &unknown, 1);
 		check(u.err == RadioErr::not_found, "unknown not_found");
